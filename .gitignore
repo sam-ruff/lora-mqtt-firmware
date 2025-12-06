@@ -1,0 +1,12 @@
+# Rust build output
+/target
+
+# ESP-IDF bootloader build output
+/bootloader/build
+/bootloader/sdkconfig
+/bootloader/sdkconfig.old
+/bootloader/dependencies.lock
+/bootloader/managed_components
+
+# Built bootloader binary (in project root)
+/silent-bootloader-esp32s3.bin

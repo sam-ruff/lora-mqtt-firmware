@@ -1,0 +1,216 @@
+# Walkie-Textie Rust Firmware
+
+ESP32-S3 firmware with WIO-SX1262 LoRa module using Embassy async runtime. Receives COBS-encoded binary commands over serial and supports LoRa TX/RX operations.
+
+## Building
+
+### Prerequisites
+
+Install the ESP Rust toolchain:
+
+```bash
+cargo install espup
+espup install
+source ~/export-esp.sh
+```
+
+You must run `source ~/export-esp.sh` in each new terminal session before building.
+
+### Host Tests
+
+Run unit tests on your development machine:
+
+```bash
+cargo test
+```
+
+### Embedded Build (ESP32-S3)
+
+Debug build:
+
+```bash
+cargo +esp build --target xtensa-esp32s3-none-elf --features embedded -Zbuild-std=core,alloc
+```
+
+Release build:
+
+```bash
+cargo +esp build --target xtensa-esp32s3-none-elf --features embedded --release -Zbuild-std=core,alloc
+```
+
+### Flash
+
+```bash
+espflash flash --port /dev/ttyACM0 target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware
+```
+
+Or use cargo run (configured in `.cargo/config.toml`):
+
+```bash
+cargo +esp run --target xtensa-esp32s3-none-elf --features embedded --release -Zbuild-std=core,alloc
+```
+
+### Debug Output
+
+Debug logs are output via USB_SERIAL_JTAG (separate from the command UART). The ESP32-S3 exposes two serial devices over USB:
+
+- `/dev/ttyACM0` - Command protocol (UART0)
+- `/dev/ttyACM1` - Debug logs (USB_SERIAL_JTAG)
+
+To view debug output:
+
+```bash
+espflash monitor --port /dev/ttyACM1
+```
+
+To reset the device and monitor debug output from boot:
+
+```bash
+espflash reset --port /dev/ttyACM0 && espflash monitor --port /dev/ttyACM1
+```
+
+## Bootloader
+
+This firmware uses the ESP-IDF 2nd stage bootloader. The bootloader is pre-flashed on most ESP32-S3 development boards.
+
+### Flashing the Bootloader from Scratch
+
+If you need to flash the bootloader (e.g., on a new chip or after corruption):
+
+1. Install espflash:
+   ```bash
+   cargo install espflash
+   ```
+
+2. Download the ESP-IDF bootloader binary for ESP32-S3 from the espflash releases or build from ESP-IDF.
+
+3. Flash the bootloader and partition table:
+   ```bash
+   espflash write-bin 0x0 bootloader.bin --port /dev/ttyACM0
+   espflash write-bin 0x8000 partition-table.bin --port /dev/ttyACM0
+   ```
+
+Alternatively, espflash can flash a complete image including bootloader:
+```bash
+espflash flash --port /dev/ttyACM0 --bootloader bootloader.bin --partition-table partition-table.bin target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware
+```
+
+### Building a Silent Bootloader
+
+By default, the ESP-IDF bootloader outputs log messages on boot. To disable this, build a custom bootloader with logging disabled using the project in `bootloader/`:
+
+1. Install ESP-IDF (v5.2 or later):
+   ```bash
+   mkdir -p ~/esp
+   cd ~/esp
+   git clone -b v5.2.2 --recursive https://github.com/espressif/esp-idf.git
+   cd esp-idf
+   ./install.sh esp32s3
+   ```
+
+2. Build the silent bootloader:
+   ```bash
+   source ~/esp/esp-idf/export.sh
+   cd bootloader
+   idf.py set-target esp32s3
+   idf.py build
+   cp build/bootloader/bootloader.bin ../silent-bootloader-esp32s3.bin
+   ```
+
+3. Flash with the silent bootloader:
+   ```bash
+   espflash flash --port /dev/ttyACM0 \
+       --bootloader silent-bootloader-esp32s3.bin \
+       target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware
+   ```
+
+### Notes on ESP-IDF Bootloader Compatibility
+
+The firmware includes an app descriptor (`esp_app_desc!` macro) required by the ESP-IDF bootloader for validation. The efuse block revision fields are set to accept all chip revisions (min=0, max=65535).
+
+## Integration Tests
+
+After flashing the firmware, run the integration tests to verify serial communication:
+
+```bash
+cd integration_tests
+cargo run -- --port /dev/ttyACM0
+```
+
+Options:
+- `--port <PORT>`: Serial port (default: /dev/ttyACM0)
+- `--baud <RATE>`: Baud rate (default: 115200)
+
+The tests verify:
+- GetVersion returns firmware version
+- Invalid command returns error
+- Multiple sequential commands work correctly
+
+## Hardware Configuration
+
+| Pin | Function |
+|-----|----------|
+| GPIO7 | SPI SCLK |
+| GPIO8 | SPI MISO |
+| GPIO9 | SPI MOSI |
+| GPIO41 | LoRa NSS (CS) |
+| GPIO39 | LoRa DIO1 (IRQ) |
+| GPIO42 | LoRa NRST |
+| GPIO40 | LoRa BUSY |
+
+TCXO voltage: 1.8V (configured via DIO3)
+
+## Command Protocol
+
+Binary protocol with COBS encoding and zero byte delimiter:
+
+```
+[COBS-encoded payload][0x00]
+
+Payload: [version: u8][cmd_id: u8][length: u16 LE][data][crc16: u16 LE]
+```
+
+Protocol version is currently `1`. The firmware will reject commands with mismatched versions.
+
+### Commands
+
+| ID | Command | Payload | Response |
+|----|---------|---------|----------|
+| 0x01 | GetVersion | None | major, minor, patch |
+| 0x10 | LoraTx | Data bytes | TxComplete |
+
+### Unsolicited Responses
+
+The firmware continuously listens for incoming LoRa packets in the background. When a packet is received, it is immediately pushed to the host as an unsolicited `RxPacket` response (response ID `0x11`). The host must be ready to receive these at any time.
+
+Unsolicited responses use sequence ID `0` to distinguish them from request/response pairs.
+
+### Response Format
+
+Responses use the same frame structure:
+
+```
+Payload: [version: u8][resp_id: u8][length: u16 LE][data][crc16: u16 LE]
+```
+
+### Response Status Codes
+
+| Code | Status |
+|------|--------|
+| 0x00 | Success |
+| 0x01 | InvalidCommand |
+| 0x02 | InvalidLength |
+| 0x03 | CrcError |
+| 0x04 | InvalidVersion |
+| 0x10 | LoraError |
+| 0x11 | Timeout |
+
+## Architecture
+
+The firmware uses esp-rtos with Embassy async tasks and channel-based command dispatch:
+
+- **Serial Reader Task**: Reads USB serial, parses COBS frames, sends commands to channel
+- **Serial Writer Task**: Receives responses from channel, encodes and writes to USB serial
+- **LoRa Task**: Continuously listens for LoRa packets (100ms polling), pushes received packets immediately to serial. Processes TX commands when available with max 100ms latency.
+
+Traits (`LoraRadio`, `SerialPort`) allow unit testing with mock implementations.

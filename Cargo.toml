@@ -1,0 +1,73 @@
+[package]
+name = "walkie-textie-rust-firmware"
+version = "0.1.0"
+edition = "2021"
+
+# Only build the binary for embedded target
+[[bin]]
+name = "walkie-textie-rust-firmware"
+path = "src/main.rs"
+required-features = ["embedded"]
+
+[dependencies]
+# ESP HAL and RTOS (only for embedded target)
+esp-hal = { version = "1.0", features = ["esp32s3", "unstable"], optional = true }
+esp-rtos = { version = "0.2", features = ["esp32s3", "embassy"], optional = true }
+esp-bootloader-esp-idf = { version = "0.4", default-features = false, features = ["esp32s3"], optional = true }
+esp-backtrace = { version = "0.18", features = ["esp32s3", "panic-handler", "println"], optional = true }
+esp-println = { version = "0.16", default-features = false, features = ["esp32s3", "jtag-serial"], optional = true }
+
+# Embassy async runtime (versions must match esp-rtos dependencies)
+embassy-executor = { version = "0.9", optional = true }
+embassy-sync = { version = "0.7", optional = true }
+embassy-time = { version = "0.5", optional = true }
+
+# Embedded HAL traits (only for embedded target)
+embedded-hal = { version = "1.0", optional = true }
+embedded-hal-async = { version = "1.0", optional = true }
+embedded-io = { version = "0.6", optional = true }
+embedded-io-async = { version = "0.6", optional = true }
+
+# Static allocation (only for embedded target)
+static_cell = { version = "2.1", optional = true }
+
+# COBS encoding
+corncobs = { version = "0.1", default-features = false }
+
+# Data structures
+heapless = "0.8"
+
+# CRC calculation
+crc = "3.0"
+
+# Logging
+log = "0.4"
+
+[dev-dependencies]
+futures = { version = "0.3", default-features = false, features = ["executor"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+[profile.dev]
+opt-level = 1
+
+[features]
+default = []
+# Enable this for embedded builds
+embedded = [
+    "esp-hal",
+    "esp-rtos",
+    "esp-bootloader-esp-idf",
+    "esp-backtrace",
+    "esp-println",
+    "embassy-executor",
+    "embassy-sync",
+    "embassy-time",
+    "embedded-hal",
+    "embedded-hal-async",
+    "embedded-io",
+    "embedded-io-async",
+    "static_cell",
+]

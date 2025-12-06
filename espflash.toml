@@ -1,0 +1,2 @@
+[idf_format_args]
+bootloader = "bootloader/build/bootloader/bootloader.bin"

@@ -1,0 +1,31 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "integration-tests"
+path = "src/main.rs"
+
+[[bin]]
+name = "lora-tests"
+path = "src/lora_tests.rs"
+
+[dependencies]
+# Serial port communication
+serialport = "4.5"
+
+# COBS encoding (same as firmware)
+corncobs = "0.1"
+
+# CRC calculation (same as firmware)
+crc = "3.0"
+
+# CLI argument parsing
+clap = { version = "4.0", features = ["derive"] }
+
+# Error handling
+anyhow = "1.0"
+
+# Coloured output
+colored = "2.0"
