@@ -20,16 +20,24 @@ mod cmd {
     pub const SET_MODULATION_PARAMS: u8 = 0x8B;
     pub const SET_PACKET_PARAMS: u8 = 0x8C;
     pub const SET_BUFFER_BASE_ADDRESS: u8 = 0x8F;
+    pub const SET_PA_CONFIG: u8 = 0x95;
     pub const SET_DIO3_AS_TCXO_CTRL: u8 = 0x97;
     pub const SET_DIO2_AS_RF_SWITCH_CTRL: u8 = 0x9D;
     pub const SET_TX_PARAMS: u8 = 0x8E;
     pub const WRITE_BUFFER: u8 = 0x0E;
     pub const READ_BUFFER: u8 = 0x1E;
+    pub const WRITE_REGISTER: u8 = 0x0D;
     pub const GET_RX_BUFFER_STATUS: u8 = 0x13;
     pub const GET_PACKET_STATUS: u8 = 0x14;
     pub const GET_IRQ_STATUS: u8 = 0x12;
     pub const CLEAR_IRQ_STATUS: u8 = 0x02;
     pub const SET_DIO_IRQ_PARAMS: u8 = 0x08;
+}
+
+/// SX1262 register addresses
+mod reg {
+    /// Over-current protection register
+    pub const OCP_CONFIGURATION: u16 = 0x08E7;
 }
 
 /// Standby modes
@@ -189,6 +197,25 @@ where
             .await
     }
 
+    /// Write to a register
+    async fn write_register(&mut self, addr: u16, value: u8) -> Result<(), LoraError> {
+        let data = [
+            ((addr >> 8) & 0xFF) as u8,
+            (addr & 0xFF) as u8,
+            value,
+        ];
+        self.write_command(cmd::WRITE_REGISTER, &data).await
+    }
+
+    /// Set current limit (OCP - Over Current Protection)
+    /// current_ma: Current limit in mA (default 140mA for SX1262)
+    async fn set_current_limit(&mut self, current_ma: u16) -> Result<(), LoraError> {
+        // OCP register value = current_ma / 2.5
+        // Clamped to valid range
+        let ocp_value = ((current_ma as u32 * 10) / 25).min(63) as u8;
+        self.write_register(reg::OCP_CONFIGURATION, ocp_value).await
+    }
+
     /// Set standby mode
     async fn set_standby_internal(&mut self) -> Result<(), LoraError> {
         self.write_command(cmd::SET_STANDBY, &[standby::STDBY_RC])
@@ -261,10 +288,25 @@ where
         self.write_command(cmd::SET_PACKET_PARAMS, &data).await
     }
 
+    /// Configure the Power Amplifier for SX1262
+    /// Must be called before set_tx_power
+    async fn configure_pa(&mut self) -> Result<(), LoraError> {
+        // SetPaConfig for SX1262 (high power PA)
+        // paDutyCycle=0x04, hpMax=0x07, deviceSel=0x00 (SX1262), paLut=0x01
+        let data = [0x04, 0x07, 0x00, 0x01];
+        self.write_command(cmd::SET_PA_CONFIG, &data).await
+    }
+
     /// Set TX power
     async fn set_tx_power(&mut self, power_dbm: i8) -> Result<(), LoraError> {
-        // Clamp to valid range
-        let power = power_dbm.clamp(-9, 22) as u8;
+        // For SX1262 with HP PA after SetPaConfig(0x04, 0x07, 0x00, 0x01):
+        // Power register value maps directly to dBm for range -9 to +22
+        // Negative values need to be converted to two's complement
+        let power = if power_dbm < 0 {
+            (256 + power_dbm as i16) as u8
+        } else {
+            power_dbm as u8
+        };
         let data = [power, 0x04]; // Power, ramp time 200us
         self.write_command(cmd::SET_TX_PARAMS, &data).await
     }
@@ -390,6 +432,27 @@ where
             Timer::after(Duration::from_micros(100)).await;
         }
     }
+
+    /// Start continuous receive mode (like Arduino's startReceive)
+    /// Puts the radio into RX mode with no timeout
+    async fn start_receive_mode(&mut self) -> Result<(), LoraError> {
+        // Set to standby first
+        self.set_standby_internal().await?;
+
+        // Set packet parameters for max length
+        self.set_packet_params(MAX_LORA_PAYLOAD as u8).await?;
+
+        // Configure IRQ for RX done, timeout, CRC error
+        self.configure_irq(irq::RX_DONE | irq::TIMEOUT | irq::CRC_ERR)
+            .await?;
+        self.clear_irq(0xFFFF).await?;
+
+        // Start continuous RX (timeout = 0xFFFFFF means continuous)
+        let timeout_bytes = [0xFF, 0xFF, 0xFF];
+        self.write_command(cmd::SET_RX, &timeout_bytes).await?;
+
+        Ok(())
+    }
 }
 
 impl<Spi, Nss, Dio1, Nrst, Busy> LoraRadio for Sx1262Driver<Spi, Nss, Dio1, Nrst, Busy>
@@ -415,6 +478,9 @@ where
         // Configure DIO2 as RF switch control
         self.configure_dio2_rf_switch().await?;
 
+        // Set current limit (140mA as per Arduino config)
+        self.set_current_limit(140).await?;
+
         // Set packet type to LoRa
         self.set_packet_type_lora().await?;
 
@@ -423,6 +489,9 @@ where
 
         // Apply default configuration
         self.configure(&LoraConfig::default()).await?;
+
+        // Start in receive mode (like Arduino's startReceive at end of begin())
+        self.start_receive_mode().await?;
 
         self.initialised = true;
         Ok(())
@@ -458,6 +527,9 @@ where
 
         // Clear IRQ
         self.clear_irq(0xFFFF).await?;
+
+        // Return to RX mode (like Arduino's startReceive after transmit)
+        self.start_receive_mode().await?;
 
         if irq_status & irq::TX_DONE != 0 {
             Ok(())
@@ -543,6 +615,9 @@ where
 
         // Set modulation parameters
         self.set_modulation_params(config).await?;
+
+        // Configure Power Amplifier (must be called before SetTxParams)
+        self.configure_pa().await?;
 
         // Set TX power
         self.set_tx_power(config.tx_power_dbm).await?;

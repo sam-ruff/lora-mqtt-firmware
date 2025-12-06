@@ -45,7 +45,8 @@ use protocol::framing::FrameAccumulator;
 use serial::reader::ReadResult;
 
 /// Polling interval for background LoRa receive (max TX latency)
-const RX_POLL_INTERVAL_MS: u32 = 100;
+/// Higher SF requires longer time-on-air, so increase for SF11
+const RX_POLL_INTERVAL_MS: u32 = 500;
 
 /// Type alias for the command channel sender
 type CommandSender = Sender<'static, CriticalSectionRawMutex, CommandEnvelope, 8>;
@@ -374,47 +375,45 @@ async fn lora_task(
     let _ = radio.init().await;
 
     loop {
-        // Check for pending command (non-blocking)
-        match command_receiver.try_receive() {
-            Ok(envelope) => {
-                // Signal LED flash for TX command (non-blocking)
+        // Listen for LoRa packets with short timeout, checking for commands
+        match radio.receive(RX_POLL_INTERVAL_MS).await {
+            Ok(packet) => {
+                // Signal LED flash for received packet (non-blocking)
                 let _ = led_sender.try_send(LedFlashDuration::Default);
 
-                let response = dispatcher.dispatch(&mut radio, envelope.command).await;
-
-                // Publish command response (subscribers filter by source)
-                let msg = ResponseMessage::Command {
-                    source: envelope.source,
-                    sequence_id: envelope.sequence_id,
-                    response,
+                let response = Response::RxPacket {
+                    data: packet.data,
+                    rssi: packet.rssi,
+                    snr: packet.snr,
                 };
+                // Broadcast unsolicited to all subscribers (serial, BLE)
+                let msg = ResponseMessage::Unsolicited(response);
                 response_pub.publish_immediate(msg);
             }
+            Err(LoraError::Timeout) => {
+                // Normal - no packet received within poll interval
+                // Check for pending commands during RX gap
+            }
             Err(_) => {
-                // No command pending - listen for LoRa packets
-                match radio.receive(RX_POLL_INTERVAL_MS).await {
-                    Ok(packet) => {
-                        // Signal LED flash for received packet (non-blocking)
-                        let _ = led_sender.try_send(LedFlashDuration::Default);
-
-                        let response = Response::RxPacket {
-                            data: packet.data,
-                            rssi: packet.rssi,
-                            snr: packet.snr,
-                        };
-                        // Broadcast unsolicited to all subscribers (serial, BLE)
-                        // If no subscribers, message is dropped (non-blocking)
-                        let msg = ResponseMessage::Unsolicited(response);
-                        response_pub.publish_immediate(msg);
-                    }
-                    Err(LoraError::Timeout) => {
-                        // Normal - no packet received within poll interval
-                    }
-                    Err(_) => {
-                        // Other errors - continue listening
-                    }
-                }
+                // Other errors - continue
             }
         }
+
+        // Process any pending commands (non-blocking check)
+        while let Ok(envelope) = command_receiver.try_receive() {
+            // Signal LED flash for TX command (non-blocking)
+            let _ = led_sender.try_send(LedFlashDuration::Default);
+
+            let response = dispatcher.dispatch(&mut radio, envelope.command).await;
+
+            // Publish command response (subscribers filter by source)
+            let msg = ResponseMessage::Command {
+                source: envelope.source,
+                sequence_id: envelope.sequence_id,
+                response,
+            };
+            response_pub.publish_immediate(msg);
+        }
+        // Loop back to receive() - ensures we're always listening when idle
     }
 }

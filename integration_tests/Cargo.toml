@@ -15,6 +15,10 @@ path = "src/lora_tests.rs"
 name = "ble-serial-tests"
 path = "src/ble_serial_tests.rs"
 
+[[bin]]
+name = "ble-ble-tests"
+path = "src/ble_ble_tests.rs"
+
 [dependencies]
 # Serial port communication
 serialport = "4.5"

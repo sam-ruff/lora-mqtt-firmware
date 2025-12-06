@@ -33,13 +33,14 @@ pub mod tcxo {
 
 /// Default LoRa configuration
 pub mod lora_defaults {
-    /// EU ISM band frequency
-    pub const FREQUENCY_HZ: u32 = 868_000_000;
-    pub const SPREADING_FACTOR: u8 = 7;
-    pub const BANDWIDTH_KHZ: u32 = 125;
-    /// Coding rate 4/5
-    pub const CODING_RATE: u8 = 5;
-    pub const TX_POWER_DBM: i8 = 14;
+    /// Frequency in Hz (869.525 MHz - matches Arduino config)
+    pub const FREQUENCY_HZ: u32 = 869_525_000;
+    pub const SPREADING_FACTOR: u8 = 11;
+    pub const BANDWIDTH_KHZ: u32 = 250;
+    /// Coding rate 4/8 (higher redundancy)
+    pub const CODING_RATE: u8 = 8;
+    /// TX power in dBm (supports -9 to +22)
+    pub const TX_POWER_DBM: i8 = 22;
 }
 
 /// Serial configuration
