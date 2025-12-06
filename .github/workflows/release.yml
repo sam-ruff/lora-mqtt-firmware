@@ -30,13 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install ESP Rust toolchain
         run: |
-          cargo install espup
+          cargo +stable install espup
           espup install
-          source ~/export-esp.sh
-          echo "PATH=$PATH" >> $GITHUB_ENV
-          echo "LIBCLANG_PATH=$LIBCLANG_PATH" >> $GITHUB_ENV
 
       - name: Build release firmware
         run: |
