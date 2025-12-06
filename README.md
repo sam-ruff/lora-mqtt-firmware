@@ -50,23 +50,12 @@ Or use cargo run (configured in `.cargo/config.toml`):
 cargo +esp run --target xtensa-esp32s3-none-elf --features embedded --release -Zbuild-std=core,alloc
 ```
 
-### Debug Output
+### Monitor
 
-Debug logs are output via USB_SERIAL_JTAG (separate from the command UART). The ESP32-S3 exposes two serial devices over USB:
-
-- `/dev/ttyACM0` - Command protocol (UART0)
-- `/dev/ttyACM1` - Debug logs (USB_SERIAL_JTAG)
-
-To view debug output:
+To monitor serial output after flashing:
 
 ```bash
-espflash monitor --port /dev/ttyACM1
-```
-
-To reset the device and monitor debug output from boot:
-
-```bash
-espflash reset --port /dev/ttyACM0 && espflash monitor --port /dev/ttyACM1
+espflash monitor --port /dev/ttyACM0
 ```
 
 ## Bootloader
@@ -130,11 +119,15 @@ The firmware includes an app descriptor (`esp_app_desc!` macro) required by the 
 
 ## Integration Tests
 
-After flashing the firmware, run the integration tests to verify serial communication:
+After flashing the firmware, run the integration tests to verify serial communication.
+
+### Single-Device Tests
+
+Tests basic command/response functionality:
 
 ```bash
 cd integration_tests
-cargo run -- --port /dev/ttyACM0
+cargo run --bin integration-tests -- --port /dev/ttyACM0
 ```
 
 Options:
@@ -145,6 +138,27 @@ The tests verify:
 - GetVersion returns firmware version
 - Invalid command returns error
 - Multiple sequential commands work correctly
+
+### Two-Device LoRa Tests
+
+Tests bidirectional LoRa communication between two flashed devices:
+
+```bash
+cd integration_tests
+cargo run --bin lora-tests -- --port-a /dev/ttyACM0 --port-b /dev/ttyACM1
+```
+
+Options:
+- `--port-a <PORT>`: Serial port for device A (default: /dev/ttyACM0)
+- `--port-b <PORT>`: Serial port for device B (default: /dev/ttyACM1)
+- `--baud <RATE>`: Baud rate (default: 115200)
+
+The tests verify:
+- A to B transmission
+- B to A transmission
+- Bidirectional ping-pong
+- Multiple sequential messages
+- Reliability (10 round trips)
 
 ## Hardware Configuration
 
@@ -157,6 +171,7 @@ The tests verify:
 | GPIO39 | LoRa DIO1 (IRQ) |
 | GPIO42 | LoRa NRST |
 | GPIO40 | LoRa BUSY |
+| GPIO48 | LED (active low) |
 
 TCXO voltage: 1.8V (configured via DIO3)
 
@@ -176,22 +191,36 @@ Protocol version is currently `1`. The firmware will reject commands with mismat
 
 | ID | Command | Payload | Response |
 |----|---------|---------|----------|
-| 0x01 | GetVersion | None | major, minor, patch |
-| 0x10 | LoraTx | Data bytes | TxComplete |
+| 0x01 | GetVersion | None | Version |
+| 0x10 | LoraTx | Data bytes (max 256) | TxComplete |
 
-### Unsolicited Responses
+### Responses
 
-The firmware continuously listens for incoming LoRa packets in the background. When a packet is received, it is immediately pushed to the host as an unsolicited `RxPacket` response (response ID `0x11`). The host must be ready to receive these at any time.
-
-Unsolicited responses use sequence ID `0` to distinguish them from request/response pairs.
+| ID | Response | Payload |
+|----|----------|---------|
+| 0x01 | Version | major, minor, patch |
+| 0x10 | TxComplete | None |
+| 0x11 | RxPacket | data, rssi (i16 LE), snr (i8) |
+| 0xFF | Error | status code, original command ID |
 
 ### Response Format
 
-Responses use the same frame structure:
+Responses use the same frame structure as commands:
 
 ```
 Payload: [version: u8][resp_id: u8][length: u16 LE][data][crc16: u16 LE]
 ```
+
+### Unsolicited Responses
+
+The firmware continuously listens for incoming LoRa packets in the background (100ms polling interval). When a packet is received, it is immediately pushed to the host as an unsolicited `RxPacket` response.
+
+- Response ID: `0x11`
+- Sequence ID: `0` (distinguishes unsolicited from request/response pairs)
+- Payload: `[data bytes][rssi: i16 LE][snr: i8]`
+- Max TX latency: 100ms (radio must exit RX mode to transmit)
+
+The host must be ready to receive these at any time.
 
 ### Response Status Codes
 
@@ -207,10 +236,26 @@ Payload: [version: u8][resp_id: u8][length: u16 LE][data][crc16: u16 LE]
 
 ## Architecture
 
-The firmware uses esp-rtos with Embassy async tasks and channel-based command dispatch:
+The firmware uses esp-rtos with Embassy async tasks and channel-based communication:
 
 - **Serial Reader Task**: Reads USB serial, parses COBS frames, sends commands to channel
 - **Serial Writer Task**: Receives responses from channel, encodes and writes to USB serial
 - **LoRa Task**: Continuously listens for LoRa packets (100ms polling), pushes received packets immediately to serial. Processes TX commands when available with max 100ms latency.
+- **LED Task**: Flashes LED on TX/RX events via channel (non-blocking)
 
 Traits (`LoraRadio`, `SerialPort`) allow unit testing with mock implementations.
+
+## CI/CD
+
+GitHub Actions runs on every push to `main`:
+
+1. **Test**: Runs unit tests (`cargo test`)
+2. **Build**: Builds release firmware using ESP toolchain
+3. **Release**: Creates GitHub releases via semantic-release
+
+Releases are triggered by conventional commit messages:
+- `feat: ...` - minor version bump
+- `fix: ...` - patch version bump
+- `feat!: ...` or `BREAKING CHANGE:` - major version bump
+
+The firmware binary is attached to each GitHub release.
