@@ -1,6 +1,6 @@
 # Walkie-Textie Rust Firmware
 
-ESP32-S3 firmware with WIO-SX1262 LoRa module using Embassy async runtime. Receives COBS-encoded binary commands over serial and supports LoRa TX/RX operations.
+ESP32-S3 firmware with WIO-SX1262 LoRa module using Embassy async runtime. Receives COBS-encoded binary commands over serial or BLE and supports LoRa TX/RX operations.
 
 ## Building
 
@@ -234,6 +234,29 @@ The host must be ready to receive these at any time.
 | 0x10 | LoraError |
 | 0x11 | Timeout |
 
+## Bluetooth LE
+
+The firmware advertises as "WalkieTextie" and provides a Nordic UART Service (NUS) for command/response communication alongside serial.
+
+### Nordic UART Service UUIDs
+
+| Characteristic | UUID |
+|---------------|------|
+| Service | 6E400001-B5A3-F393-E0A9-E50E24DCCA9E |
+| RX (write) | 6E400002-B5A3-F393-E0A9-E50E24DCCA9E |
+| TX (notify) | 6E400003-B5A3-F393-E0A9-E50E24DCCA9E |
+
+### Usage
+
+1. Scan for and connect to "WalkieTextie"
+2. Enable notifications on the TX characteristic
+3. Write COBS-encoded commands to the RX characteristic
+4. Receive COBS-encoded responses via TX notifications
+
+The same binary protocol is used over BLE as over serial. Commands sent via BLE receive responses via BLE; unsolicited LoRa RX packets are only sent to serial.
+
+Compatible apps: nRF Connect, any app supporting NUS.
+
 ## Architecture
 
 The firmware uses esp-rtos with Embassy async tasks and channel-based communication:
@@ -242,6 +265,7 @@ The firmware uses esp-rtos with Embassy async tasks and channel-based communicat
 - **Serial Writer Task**: Receives responses from channel, encodes and writes to USB serial
 - **LoRa Task**: Continuously listens for LoRa packets (100ms polling), pushes received packets immediately to serial. Processes TX commands when available with max 100ms latency.
 - **LED Task**: Flashes LED on TX/RX events via channel (non-blocking)
+- **BLE Host Task**: Manages BLE advertising, connections, and Nordic UART Service. Routes commands to the same channel as serial.
 
 Traits (`LoraRadio`, `SerialPort`) allow unit testing with mock implementations.
 

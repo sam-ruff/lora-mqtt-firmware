@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 // Required for ESP-IDF bootloader compatibility
 // Use explicit parameters to ensure correct efuse block revision values
 esp_bootloader_esp_idf::esp_app_desc!(
@@ -27,6 +29,7 @@ use esp_hal::usb_serial_jtag::UsbSerialJtag;
 use esp_hal::Async;
 use static_cell::StaticCell;
 
+mod ble;
 mod commands;
 mod config;
 mod dispatcher;
@@ -35,7 +38,7 @@ mod protocol;
 mod serial;
 
 use commands::{CommandParser, Response, ResponseSerialiser};
-use dispatcher::{CommandDispatcher, CommandEnvelope, CommandSource, COMMAND_CHANNEL, SERIAL_RESPONSE_CHANNEL};
+use dispatcher::{CommandDispatcher, CommandEnvelope, CommandSource, ResponseMessage, COMMAND_CHANNEL, RESPONSE_CHANNEL};
 use lora::driver::{Sx1262Driver, Sx1262Pins};
 use lora::traits::{LoraError, LoraRadio};
 use protocol::framing::FrameAccumulator;
@@ -44,18 +47,11 @@ use serial::reader::ReadResult;
 /// Polling interval for background LoRa receive (max TX latency)
 const RX_POLL_INTERVAL_MS: u32 = 100;
 
-/// Sequence ID for unsolicited responses (background RX packets)
-const UNSOLICITED_SEQUENCE_ID: u16 = 0;
-
 /// Type alias for the command channel sender
 type CommandSender = Sender<'static, CriticalSectionRawMutex, CommandEnvelope, 8>;
 
 /// Type alias for the command channel receiver
 type CommandReceiver = Receiver<'static, CriticalSectionRawMutex, CommandEnvelope, 8>;
-
-/// Type alias for the response channel
-type ResponseReceiver = Receiver<'static, CriticalSectionRawMutex, (u16, Response), 4>;
-type ResponseSender = Sender<'static, CriticalSectionRawMutex, (u16, Response), 4>;
 
 /// LED flash duration configuration
 #[derive(Clone, Copy)]
@@ -73,12 +69,18 @@ type LedReceiver = Receiver<'static, CriticalSectionRawMutex, LedFlashDuration, 
 /// Static executor for embassy
 static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
+/// Static cell for esp-radio controller (needed for 'static lifetime)
+static RADIO_CONTROLLER: StaticCell<esp_radio::Controller<'static>> = StaticCell::new();
+
 /// Channel for LED flash signals
 static LED_CHANNEL: embassy_sync::channel::Channel<CriticalSectionRawMutex, LedFlashDuration, 4> =
     embassy_sync::channel::Channel::new();
 
 #[esp_hal::main]
 fn main() -> ! {
+    // Initialise heap allocator for BLE support (64KB - BLE requires significant heap)
+    esp_alloc::heap_allocator!(size: 64 * 1024);
+
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     // Turn on LED (active low)
@@ -126,12 +128,38 @@ fn main() -> ! {
     let usb_serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
     let (usb_rx, usb_tx) = usb_serial.split();
 
+    // Read unique device ID from eFuse MAC address (last 3 bytes)
+    let mac = esp_hal::efuse::Efuse::read_base_mac_address();
+    let device_id: [u8; 3] = [mac[3], mac[4], mac[5]];
+
+    // Initialise esp-radio for BLE support (must be after esp_rtos::start)
+    let radio_controller = RADIO_CONTROLLER.init(
+        esp_radio::init().expect("Failed to initialize esp-radio")
+    );
+
+    // Create BLE connector (ownership is passed to ExternalController)
+    let ble_connector = esp_radio::ble::controller::BleConnector::new(
+        radio_controller,
+        peripherals.BT,
+        esp_radio::ble::Config::default(),
+    ).expect("Failed to initialize BLE connector");
+
+    // Wrap in ExternalController for trouble-host compatibility
+    let controller: trouble_host::prelude::ExternalController<_, 10> =
+        trouble_host::prelude::ExternalController::new(ble_connector);
+
     // Create and run the embassy executor
     let executor = EXECUTOR.init(esp_rtos::embassy::Executor::new());
     executor.run(|spawner| {
-        spawner.must_spawn(async_main(spawner, usb_rx, usb_tx, lora_driver, led));
+        spawner.must_spawn(async_main(spawner, usb_rx, usb_tx, lora_driver, led, controller, device_id));
     })
 }
+
+/// Type alias for the BLE controller
+type BleController = trouble_host::prelude::ExternalController<
+    esp_radio::ble::controller::BleConnector<'static>,
+    10,
+>;
 
 #[embassy_executor::task]
 async fn async_main(
@@ -146,20 +174,21 @@ async fn async_main(
         Input<'static>,
     >,
     led: Output<'static>,
+    ble_controller: BleController,
+    device_id: [u8; 3],
 ) {
     // Get channel handles
     let command_sender = COMMAND_CHANNEL.sender();
     let command_receiver = COMMAND_CHANNEL.receiver();
-    let response_sender = SERIAL_RESPONSE_CHANNEL.sender();
-    let response_receiver = SERIAL_RESPONSE_CHANNEL.receiver();
     let led_sender = LED_CHANNEL.sender();
     let led_receiver = LED_CHANNEL.receiver();
 
     // Spawn tasks
-    spawner.spawn(serial_reader_task(usb_rx, command_sender, response_sender.clone())).unwrap();
-    spawner.spawn(serial_writer_task(usb_tx, response_receiver)).unwrap();
-    spawner.spawn(lora_task(lora_driver, command_receiver, response_sender, led_sender)).unwrap();
+    spawner.spawn(serial_reader_task(usb_rx, command_sender)).unwrap();
+    spawner.spawn(serial_writer_task(usb_tx)).unwrap();
+    spawner.spawn(lora_task(lora_driver, command_receiver, led_sender)).unwrap();
     spawner.spawn(led_task(led, led_receiver)).unwrap();
+    spawner.spawn(ble_host_task(ble_controller, device_id)).unwrap();
 }
 
 /// Task that reads commands from USB serial
@@ -167,11 +196,13 @@ async fn async_main(
 async fn serial_reader_task(
     mut usb_rx: esp_hal::usb_serial_jtag::UsbSerialJtagRx<'static, Async>,
     command_sender: CommandSender,
-    response_sender: ResponseSender,
 ) {
     let mut accumulator = FrameAccumulator::new();
     let parser = CommandParser::new();
     let mut sequence_counter: u16 = 0;
+
+    // Get publisher for sending parse error responses
+    let response_pub = RESPONSE_CHANNEL.immediate_publisher();
 
     loop {
         // Read bytes from USB serial
@@ -197,7 +228,12 @@ async fn serial_reader_task(
                             }
                             Some(ReadResult::ParseError(status, cmd_id)) => {
                                 let response = Response::error_raw(status, cmd_id);
-                                response_sender.send((seq_id, response)).await;
+                                let msg = ResponseMessage::Command {
+                                    source: CommandSource::Serial,
+                                    sequence_id: seq_id,
+                                    response,
+                                };
+                                response_pub.publish_immediate(msg);
                             }
                             None => {
                                 // Invalid frame, ignore
@@ -250,14 +286,35 @@ fn process_frame(
 #[embassy_executor::task]
 async fn serial_writer_task(
     mut usb_tx: esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
-    response_receiver: ResponseReceiver,
 ) {
     let serialiser = ResponseSerialiser::new();
 
+    // Subscribe to unified response channel
+    let mut response_sub = RESPONSE_CHANNEL.subscriber().unwrap();
+
     loop {
-        let (_seq_id, response) = response_receiver.receive().await;
-        let encoded = serialiser.serialise(&response);
-        let _ = embedded_io_async::Write::write_all(&mut usb_tx, &encoded).await;
+        let msg = response_sub.next_message_pure().await;
+
+        // Filter and process messages
+        let response = match msg {
+            ResponseMessage::Command { source, response, .. } => {
+                // Only process responses for Serial source
+                if source == CommandSource::Serial {
+                    Some(response)
+                } else {
+                    None
+                }
+            }
+            ResponseMessage::Unsolicited(response) => {
+                // Always process unsolicited packets
+                Some(response)
+            }
+        };
+
+        if let Some(response) = response {
+            let encoded = serialiser.serialise(&response);
+            let _ = embedded_io_async::Write::write_all(&mut usb_tx, &encoded).await;
+        }
     }
 }
 
@@ -282,6 +339,15 @@ async fn led_task(mut led: Output<'static>, receiver: LedReceiver) {
     }
 }
 
+/// Task that manages BLE connectivity
+///
+/// This task handles BLE advertising, connections, and routes commands/responses
+/// through the Nordic UART Service.
+#[embassy_executor::task]
+async fn ble_host_task(controller: BleController, device_id: [u8; 3]) {
+    ble::ble_task(controller, device_id).await;
+}
+
 /// Task that handles LoRa operations with background listening
 ///
 /// This task continuously listens for incoming LoRa packets and pushes them
@@ -297,10 +363,12 @@ async fn lora_task(
         Input<'static>,
     >,
     command_receiver: CommandReceiver,
-    response_sender: ResponseSender,
     led_sender: LedSender,
 ) {
     let dispatcher = CommandDispatcher::new();
+
+    // Get publisher for all responses (broadcasts to all subscribers)
+    let response_pub = RESPONSE_CHANNEL.immediate_publisher();
 
     // Initialise LoRa radio
     let _ = radio.init().await;
@@ -314,15 +382,13 @@ async fn lora_task(
 
                 let response = dispatcher.dispatch(&mut radio, envelope.command).await;
 
-                // Route response based on source
-                match envelope.source {
-                    CommandSource::Serial => {
-                        response_sender.send((envelope.sequence_id, response)).await;
-                    }
-                    CommandSource::Ble | CommandSource::WiFi => {
-                        // Future: route to appropriate response channel
-                    }
-                }
+                // Publish command response (subscribers filter by source)
+                let msg = ResponseMessage::Command {
+                    source: envelope.source,
+                    sequence_id: envelope.sequence_id,
+                    response,
+                };
+                response_pub.publish_immediate(msg);
             }
             Err(_) => {
                 // No command pending - listen for LoRa packets
@@ -336,8 +402,10 @@ async fn lora_task(
                             rssi: packet.rssi,
                             snr: packet.snr,
                         };
-                        // Send as unsolicited response
-                        response_sender.send((UNSOLICITED_SEQUENCE_ID, response)).await;
+                        // Broadcast unsolicited to all subscribers (serial, BLE)
+                        // If no subscribers, message is dropped (non-blocking)
+                        let msg = ResponseMessage::Unsolicited(response);
+                        response_pub.publish_immediate(msg);
                     }
                     Err(LoraError::Timeout) => {
                         // Normal - no packet received within poll interval

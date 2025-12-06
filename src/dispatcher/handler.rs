@@ -8,19 +8,17 @@ use crate::config::protocol;
 use crate::lora::traits::{LoraError, LoraRadio};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::pubsub::PubSubChannel;
 
 /// Channel capacity for incoming commands
 const COMMAND_CHANNEL_SIZE: usize = 8;
-
-/// Channel capacity for responses
-const RESPONSE_CHANNEL_SIZE: usize = 4;
 
 /// Identifies the source of a command for routing responses
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandSource {
     /// Command received via serial/UART
     Serial,
-    /// Command received via BLE (future)
+    /// Command received via BLE
     Ble,
     /// Command received via WiFi (future)
     WiFi,
@@ -37,6 +35,23 @@ pub struct CommandEnvelope {
     pub sequence_id: u16,
 }
 
+/// Message type for all outgoing responses
+///
+/// Subscribers filter based on message type:
+/// - Command responses: filtered by source (only the originating interface receives it)
+/// - Unsolicited: delivered to all connected interfaces
+#[derive(Debug, Clone)]
+pub enum ResponseMessage {
+    /// Command response - should be filtered by source
+    Command {
+        source: CommandSource,
+        sequence_id: u16,
+        response: Response,
+    },
+    /// Unsolicited packet (RxPacket) - delivered to all connected interfaces
+    Unsolicited(Response),
+}
+
 /// Global channel for commands from all sources
 ///
 /// Multiple producers (serial, BLE, WiFi) send commands here.
@@ -44,9 +59,16 @@ pub struct CommandEnvelope {
 pub static COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, CommandEnvelope, COMMAND_CHANNEL_SIZE> =
     Channel::new();
 
-/// Channel for responses destined for serial port
-pub static SERIAL_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, (u16, Response), RESPONSE_CHANNEL_SIZE> =
-    Channel::new();
+/// Unified channel for all responses (command responses + unsolicited)
+///
+/// Uses PubSubChannel so multiple subscribers (serial, BLE) can receive messages.
+/// Each subscriber filters based on ResponseMessage type:
+/// - Command responses: only accepted if source matches the subscriber's interface
+/// - Unsolicited: always accepted by all subscribers
+///
+/// Parameters: CAP=8 messages, SUBS=2 subscribers (serial, BLE), PUBS=1 publisher (lora_task)
+pub static RESPONSE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ResponseMessage, 8, 2, 1> =
+    PubSubChannel::new();
 
 /// Command dispatcher
 ///
