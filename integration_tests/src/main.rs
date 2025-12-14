@@ -9,15 +9,15 @@ mod tests;
 use clap::Parser;
 use colored::Colorize;
 
-use device::DeviceClient;
+use device::{resolve_port, DeviceClient};
 use tests::{print_results, run_all_tests};
 
 #[derive(Parser)]
 #[command(name = "integration-tests")]
 #[command(about = "Integration tests for walkie-textie firmware")]
 struct Args {
-    /// Serial port for the device
-    #[arg(short, long, default_value = "/dev/ttyACM0")]
+    /// Serial port for the device (use "auto" to auto-detect)
+    #[arg(short, long, default_value = "auto")]
     port: String,
 
     /// Baud rate
@@ -28,13 +28,16 @@ struct Args {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    // Resolve port (auto-detect if "auto")
+    let port = resolve_port(&args.port)?;
+
     println!("{}", "Walkie-Textie Integration Tests".bold());
-    println!("Port: {}", args.port);
+    println!("Port: {}", port);
     println!("Baud: {}", args.baud);
     println!();
 
     println!("Connecting to device...");
-    let mut device = DeviceClient::new(&args.port, args.baud)?;
+    let mut device = DeviceClient::new(&port, args.baud)?;
 
     // Wait for bootloader output to finish, then clear buffer
     std::thread::sleep(std::time::Duration::from_secs(1));

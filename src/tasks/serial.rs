@@ -1,11 +1,12 @@
-//! Serial tasks for USB JTAG command/response handling
+//! Serial tasks for command/response handling.
 //!
-//! Handles reading commands from and writing responses to the USB serial interface.
+//! Handles reading commands from and writing responses to a serial interface.
+//! These tasks are generic over any type implementing embedded_io_async traits,
+//! allowing them to work with USB Serial JTAG, USB CDC-ACM, or other serial interfaces.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
-use esp_hal::usb_serial_jtag::{UsbSerialJtagRx, UsbSerialJtagTx};
-use esp_hal::Async;
+use embedded_io_async::{Read, Write};
 
 use crate::commands::{CommandParser, Response, ResponseSerialiser};
 use crate::config;
@@ -19,9 +20,11 @@ pub type CommandSender = Sender<'static, CriticalSectionRawMutex, CommandEnvelop
 /// Type alias for the command channel receiver
 pub type CommandReceiver = Receiver<'static, CriticalSectionRawMutex, CommandEnvelope, 8>;
 
-/// Task that reads commands from USB serial
-pub async fn serial_reader_task(
-    mut usb_rx: UsbSerialJtagRx<'static, Async>,
+/// Task that reads commands from a serial interface.
+///
+/// Generic over any type implementing `embedded_io_async::Read`.
+pub async fn serial_reader_task<R: Read>(
+    mut reader: R,
     command_sender: CommandSender,
 ) {
     let mut accumulator = FrameAccumulator::new();
@@ -32,9 +35,9 @@ pub async fn serial_reader_task(
     let response_pub = RESPONSE_CHANNEL.immediate_publisher();
 
     loop {
-        // Read bytes from USB serial
+        // Read bytes from serial
         let mut buf = [0u8; 64];
-        match embedded_io_async::Read::read(&mut usb_rx, &mut buf).await {
+        match reader.read(&mut buf).await {
             Ok(0) => continue,
             Ok(n) => {
                 // Process each byte through the frame accumulator
@@ -109,8 +112,10 @@ fn process_frame(
     }
 }
 
-/// Task that writes responses to USB serial
-pub async fn serial_writer_task(mut usb_tx: UsbSerialJtagTx<'static, Async>) {
+/// Task that writes responses to a serial interface.
+///
+/// Generic over any type implementing `embedded_io_async::Write`.
+pub async fn serial_writer_task<W: Write>(mut writer: W) {
     let serialiser = ResponseSerialiser::new();
 
     // Subscribe to unified response channel
@@ -137,7 +142,7 @@ pub async fn serial_writer_task(mut usb_tx: UsbSerialJtagTx<'static, Async>) {
 
         if let Some(response) = response {
             let encoded = serialiser.serialise(&response);
-            let _ = embedded_io_async::Write::write_all(&mut usb_tx, &encoded).await;
+            let _ = writer.write_all(&encoded).await;
         }
     }
 }

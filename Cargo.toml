@@ -39,6 +39,9 @@ esp-alloc = { version = "0.9", optional = true }
 # Async utilities for BLE
 embassy-futures = { version = "0.1", optional = true }
 
+# USB OTG support for dual CDC-ACM
+embassy-usb = { version = "0.5", default-features = false, features = ["max-interface-count-4", "max-handler-count-4"], optional = true }
+
 # COBS encoding
 corncobs = { version = "0.1", default-features = false }
 
@@ -82,4 +85,5 @@ embedded = [
     "trouble-host",
     "esp-alloc",
     "embassy-futures",
+    "embassy-usb",
 ]

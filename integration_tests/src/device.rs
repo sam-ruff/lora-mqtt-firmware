@@ -6,7 +6,82 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use serialport::SerialPort;
 
-use crate::protocol::{build_command, cobs_decode, cobs_encode, build_command_payload, parse_response, CommandId, Response};
+use crate::protocol::{build_command, cobs_decode, cobs_encode, build_command_payload, parse_response, CommandId, Response, ResponseId};
+
+/// Find available data ports by scanning ttyACM devices and testing with GetVersion.
+/// Returns a list of port names that respond to GetVersion (these are the data ports).
+pub fn find_data_ports() -> Result<Vec<String>> {
+    let ports = serialport::available_ports()?;
+    let mut data_ports = Vec::new();
+
+    for port_info in ports {
+        // Filter to ttyACM devices (CDC-ACM)
+        if !port_info.port_name.contains("ttyACM") {
+            continue;
+        }
+
+        // Try to connect and send GetVersion
+        if let Ok(mut client) = DeviceClient::new(&port_info.port_name, 115200) {
+            // Set short timeout for probing
+            client.set_timeout(Duration::from_millis(500));
+            if let Ok(response) = client.send_command(CommandId::GetVersion, &[]) {
+                if response.resp_id == ResponseId::Version {
+                    data_ports.push(port_info.port_name.clone());
+                }
+            }
+        }
+    }
+
+    Ok(data_ports)
+}
+
+/// Find a single data port. Returns error if none found.
+pub fn find_data_port() -> Result<String> {
+    let ports = find_data_ports()?;
+    match ports.into_iter().next() {
+        Some(port) => Ok(port),
+        None => anyhow::bail!("No data port found - ensure device is connected"),
+    }
+}
+
+/// Find two distinct data ports for dual-device tests.
+/// Returns error if fewer than two ports are found.
+pub fn find_two_data_ports() -> Result<(String, String)> {
+    let ports = find_data_ports()?;
+    if ports.len() < 2 {
+        anyhow::bail!(
+            "Need at least 2 devices connected, found {}. Ports: {:?}",
+            ports.len(),
+            ports
+        );
+    }
+    Ok((ports[0].clone(), ports[1].clone()))
+}
+
+/// Resolve a port argument - returns the port path if not "auto", otherwise auto-detects.
+pub fn resolve_port(port_arg: &str) -> Result<String> {
+    if port_arg == "auto" {
+        find_data_port()
+    } else {
+        Ok(port_arg.to_string())
+    }
+}
+
+/// Resolve two port arguments for dual-device tests.
+pub fn resolve_two_ports(port_a: &str, port_b: &str) -> Result<(String, String)> {
+    match (port_a, port_b) {
+        ("auto", "auto") => find_two_data_ports(),
+        ("auto", b) => {
+            let a = find_data_port()?;
+            Ok((a, b.to_string()))
+        }
+        (a, "auto") => {
+            let b = find_data_port()?;
+            Ok((a.to_string(), b))
+        }
+        (a, b) => Ok((a.to_string(), b.to_string())),
+    }
+}
 
 /// Client for communicating with the walkie-textie device.
 pub struct DeviceClient {

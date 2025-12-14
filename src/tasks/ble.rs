@@ -60,6 +60,8 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
     let mut device_name_buf = [0u8; 20];
     let device_name = format_device_name(&mut device_name_buf, &device_id);
 
+    crate::debug!("BLE: Starting as '{}'", device_name);
+
     // Create BLE host resources
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
         HostResources::new();
@@ -110,6 +112,7 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
 
         loop {
             // Start advertising
+            crate::debug!("BLE: Advertising...");
             let advertiser = match peripheral
                 .advertise(
                     &Default::default(),
@@ -126,7 +129,10 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
 
             // Wait for connection
             let acceptor = match advertiser.accept().await {
-                Ok(a) => a,
+                Ok(a) => {
+                    crate::debug!("BLE: Connected");
+                    a
+                }
                 Err(_) => continue,
             };
 
@@ -156,6 +162,7 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                     embassy_futures::select::Either::First(gatt_event) => {
                         match gatt_event {
                             GattConnectionEvent::Disconnected { reason: _ } => {
+                                crate::debug!("BLE: Disconnected");
                                 break;
                             }
                             GattConnectionEvent::Gatt { event } => {

@@ -51,12 +51,65 @@ Or use cargo run (configured in `.cargo/config.toml`):
 cargo +esp run --features embedded --release -Zbuild-std=core,alloc
 ```
 
-### Monitor
-
-To monitor serial output after flashing:
+To flash multiple devices at once:
 
 ```bash
-espflash monitor --port /dev/ttyACM0
+./flash_devices.sh                           # Auto-detect and flash all
+./flash_devices.sh /dev/ttyACM0 /dev/ttyACM2 # Flash specific ports
+```
+
+**If flashing fails**, put the device in bootloader mode:
+1. Hold the **BOOT** button
+2. Press and release **RESET**
+3. Release **BOOT** button
+4. Run the flash command again
+
+**After flashing**, unplug and replug the USB cable. Verify the device is running by checking that two serial ports appear:
+
+```bash
+ls /dev | grep ACM
+# Should show: ttyACM0 ttyACM1 (for one device)
+# Or: ttyACM0 ttyACM1 ttyACM2 ttyACM3 (for two devices)
+```
+
+### Monitor
+
+The firmware exposes two USB CDC-ACM serial ports:
+- **CDC0** (e.g. `/dev/ttyACM0`): Data port for commands/responses
+- **CDC1** (e.g. `/dev/ttyACM1`): Debug log output
+
+To monitor the debug output after flashing:
+
+```bash
+# Open debug port (second ttyACM device)
+picocom /dev/ttyACM1 -b 115200
+```
+
+Debug output includes startup messages and LoRa/BLE events:
+```
+Walkie-Textie v0.1.0 starting...
+Device ID: A1B2C3
+Starting tasks...
+LoRa: Initialising radio...
+LoRa: Radio initialised
+BLE: Starting as 'WalkieTextie-A1B2C3'
+BLE: Advertising...
+All tasks started
+LoRa TX: 'Hello World'
+LoRa TX: Complete
+LoRa RX: 'Reply' (RSSI: -45, SNR: 8)
+BLE: Connected
+BLE: Disconnected
+```
+
+To monitor both ports simultaneously, use two terminals or a tool like `tmux`:
+```bash
+# Terminal 1: Data port (for sending commands)
+picocom /dev/ttyACM0 -b 115200
+# Terminal 2: Debug port (for viewing logs)
+picocom /dev/ttyACM1 -b 115200
+# For a second device
+picocom /dev/ttyACM3 -b 115200
 ```
 
 ## Bootloader
@@ -120,7 +173,7 @@ The firmware includes an app descriptor (`esp_app_desc!` macro) required by the 
 
 ## Integration Tests
 
-After flashing the firmware, run integration tests to verify functionality. Cargo aliases are provided for convenience:
+After flashing the firmware, run integration tests to verify functionality. Cargo aliases are provided for convenience and auto-detect data ports by default:
 
 | Alias               | Description                |
 |---------------------|----------------------------|
@@ -129,16 +182,22 @@ After flashing the firmware, run integration tests to verify functionality. Carg
 | `cargo ble-serial`  | BLE tests via serial       |
 | `cargo ble-ble`     | BLE-to-BLE tests           |
 
+Port auto-detection scans ttyACM devices and identifies the data port (CDC0) by sending a GetVersion command.
+
 ### Single-Device Tests
 
 Tests basic command/response functionality:
 
 ```bash
+# Auto-detect port (default)
+cargo integration
+
+# Or specify port manually
 cargo integration --port /dev/ttyACM0
 ```
 
 Options:
-- `--port <PORT>`: Serial port (default: /dev/ttyACM0)
+- `--port <PORT>`: Serial port (default: auto)
 - `--baud <RATE>`: Baud rate (default: 115200)
 
 The tests verify:
@@ -151,12 +210,16 @@ The tests verify:
 Tests bidirectional LoRa communication between two flashed devices:
 
 ```bash
-cargo lora --port-a /dev/ttyACM0 --port-b /dev/ttyACM1
+# Auto-detect both ports (default)
+cargo lora
+
+# Or specify ports manually
+cargo lora --port-a /dev/ttyACM0 --port-b /dev/ttyACM2
 ```
 
 Options:
-- `--port-a <PORT>`: Serial port for device A (default: /dev/ttyACM0)
-- `--port-b <PORT>`: Serial port for device B (default: /dev/ttyACM1)
+- `--port-a <PORT>`: Serial port for device A (default: auto)
+- `--port-b <PORT>`: Serial port for device B (default: auto)
 - `--baud <RATE>`: Baud rate (default: 115200)
 
 The tests verify:

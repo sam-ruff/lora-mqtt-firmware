@@ -17,15 +17,15 @@ use clap::Parser;
 use colored::Colorize;
 
 use ble_client::BleClient;
-use device::DeviceClient;
+use device::{resolve_port, DeviceClient};
 use protocol::ResponseId;
 
 #[derive(Parser)]
 #[command(name = "ble-serial-tests")]
 #[command(about = "BLE-Serial crossover integration tests for LoRa")]
 struct Args {
-    /// Serial port for device B
-    #[arg(long, default_value = "/dev/ttyACM0")]
+    /// Serial port for device B (use "auto" to auto-detect)
+    #[arg(long, default_value = "auto")]
     port_b: String,
 
     /// BLE device name for device A
@@ -45,14 +45,17 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    // Resolve port (auto-detect if "auto")
+    let port_b = resolve_port(&args.port_b)?;
+
     println!("{}", "BLE-Serial Integration Tests".bold());
     println!("Device A: BLE (scanning for \"{}\")", args.ble_name);
-    println!("Device B: Serial ({})", args.port_b);
+    println!("Device B: Serial ({})", port_b);
     println!();
 
     // Connect to Device B via serial
     println!("Connecting to Device B via serial...");
-    let mut device_b = DeviceClient::new(&args.port_b, args.baud)?;
+    let mut device_b = DeviceClient::new(&port_b, args.baud)?;
 
     // Wait for bootloader output to finish and drain buffer
     std::thread::sleep(Duration::from_millis(500));

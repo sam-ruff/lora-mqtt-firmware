@@ -11,19 +11,19 @@ use std::time::Duration;
 use clap::Parser;
 use colored::Colorize;
 
-use device::DeviceClient;
+use device::{resolve_two_ports, DeviceClient};
 use protocol::ResponseId;
 
 #[derive(Parser)]
 #[command(name = "lora-tests")]
 #[command(about = "Two-device LoRa integration tests")]
 struct Args {
-    /// Serial port for device A (transmitter first)
-    #[arg(long, default_value = "/dev/ttyACM0")]
+    /// Serial port for device A (transmitter first, use "auto" to auto-detect)
+    #[arg(long, default_value = "auto")]
     port_a: String,
 
-    /// Serial port for device B (receiver first)
-    #[arg(long, default_value = "/dev/ttyACM1")]
+    /// Serial port for device B (receiver first, use "auto" to auto-detect)
+    #[arg(long, default_value = "auto")]
     port_b: String,
 
     /// Baud rate
@@ -34,16 +34,19 @@ struct Args {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    // Resolve ports (auto-detect if "auto")
+    let (port_a, port_b) = resolve_two_ports(&args.port_a, &args.port_b)?;
+
     println!("{}", "LoRa Two-Device Integration Tests".bold());
-    println!("Device A: {}", args.port_a);
-    println!("Device B: {}", args.port_b);
+    println!("Device A: {}", port_a);
+    println!("Device B: {}", port_b);
     println!("Baud: {}", args.baud);
     println!();
 
     // Connect to both devices
     println!("Connecting to devices...");
-    let mut device_a = DeviceClient::new(&args.port_a, args.baud)?;
-    let mut device_b = DeviceClient::new(&args.port_b, args.baud)?;
+    let mut device_a = DeviceClient::new(&port_a, args.baud)?;
+    let mut device_b = DeviceClient::new(&port_b, args.baud)?;
 
     // Wait for bootloader output to finish and drain buffers
     println!("Waiting for bootloader output to finish...");

@@ -3,9 +3,9 @@ target = "xtensa-esp32s3-none-elf"
 
 [alias]
 t = "test --target x86_64-unknown-linux-gnu"
-integration = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin integration-tests --"
-lora = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin lora-tests --"
-ble-serial = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-serial-tests --"
+integration = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin integration-tests -- --port auto"
+lora = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin lora-tests -- --port-a auto --port-b auto"
+ble-serial = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-serial-tests -- --port-b auto"
 ble-ble = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-ble-tests --"
 
 [target.xtensa-esp32s3-none-elf]
@@ -24,8 +24,12 @@ ESP_LOG = "INFO"
 # - Embedded build: cargo +esp build --features embedded --release -Zbuild-std=core,alloc
 # - Flash: espflash flash --port /dev/ttyACM0 target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware
 #
-# Integration tests:
-# - Single device: cargo integration --port /dev/ttyACM0
-# - Two device LoRa: cargo lora --port-a /dev/ttyACM0 --port-b /dev/ttyACM1
-# - BLE via serial: cargo ble-serial --port /dev/ttyACM0
-# - BLE to BLE: cargo ble-ble --port-a /dev/ttyACM0 --port-b /dev/ttyACM1
+# Integration tests (auto-detect ports by default):
+# - Single device: cargo integration
+# - Two device LoRa: cargo lora
+# - BLE via serial: cargo ble-serial
+# - BLE to BLE: cargo ble-ble
+#
+# To specify ports manually, override the auto default:
+# - cargo integration --port /dev/ttyACM0
+# - cargo lora --port-a /dev/ttyACM0 --port-b /dev/ttyACM2
