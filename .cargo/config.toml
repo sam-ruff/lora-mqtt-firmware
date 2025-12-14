@@ -1,3 +1,9 @@
+[build]
+target = "xtensa-esp32s3-none-elf"
+
+[alias]
+t = "test --target x86_64-unknown-linux-gnu"
+
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor"
 rustflags = [
@@ -10,6 +16,6 @@ rustflags = [
 ESP_LOG = "INFO"
 
 # Build commands (run 'source ~/export-esp.sh' first):
-# - Host tests: cargo test
-# - Embedded build: cargo +esp build --target xtensa-esp32s3-none-elf --features embedded --release -Zbuild-std=core,alloc
+# - Host tests: cargo t
+# - Embedded build: cargo +esp build --features embedded --release -Zbuild-std=core,alloc
 # - Flash: espflash flash --port /dev/ttyACM0 target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware

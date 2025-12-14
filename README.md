@@ -21,7 +21,8 @@ You must run `source ~/export-esp.sh` in each new terminal session before buildi
 Run unit tests on your development machine:
 
 ```bash
-cargo test
+cargo t
+# or: cargo test --target x86_64-unknown-linux-gnu
 ```
 
 ### Embedded Build (ESP32-S3)
@@ -29,13 +30,13 @@ cargo test
 Debug build:
 
 ```bash
-cargo +esp build --target xtensa-esp32s3-none-elf --features embedded -Zbuild-std=core,alloc
+cargo +esp build --features embedded -Zbuild-std=core,alloc
 ```
 
 Release build:
 
 ```bash
-cargo +esp build --target xtensa-esp32s3-none-elf --features embedded --release -Zbuild-std=core,alloc
+cargo +esp build --features embedded --release -Zbuild-std=core,alloc
 ```
 
 ### Flash
@@ -47,7 +48,7 @@ espflash flash --port /dev/ttyACM0 target/xtensa-esp32s3-none-elf/release/walkie
 Or use cargo run (configured in `.cargo/config.toml`):
 
 ```bash
-cargo +esp run --target xtensa-esp32s3-none-elf --features embedded --release -Zbuild-std=core,alloc
+cargo +esp run --features embedded --release -Zbuild-std=core,alloc
 ```
 
 ### Monitor
@@ -162,15 +163,15 @@ The tests verify:
 
 ## Hardware Configuration
 
-| Pin | Function |
-|-----|----------|
-| GPIO7 | SPI SCLK |
-| GPIO8 | SPI MISO |
-| GPIO9 | SPI MOSI |
-| GPIO41 | LoRa NSS (CS) |
-| GPIO39 | LoRa DIO1 (IRQ) |
-| GPIO42 | LoRa NRST |
-| GPIO40 | LoRa BUSY |
+| Pin    | Function         |
+|--------|------------------|
+| GPIO7  | SPI SCLK         |
+| GPIO8  | SPI MISO         |
+| GPIO9  | SPI MOSI         |
+| GPIO41 | LoRa NSS (CS)    |
+| GPIO39 | LoRa DIO1 (IRQ)  |
+| GPIO42 | LoRa NRST        |
+| GPIO40 | LoRa BUSY        |
 | GPIO48 | LED (active low) |
 
 TCXO voltage: 1.8V (configured via DIO3)
@@ -189,19 +190,19 @@ Protocol version is currently `1`. The firmware will reject commands with mismat
 
 ### Commands
 
-| ID | Command | Payload | Response |
-|----|---------|---------|----------|
-| 0x01 | GetVersion | None | Version |
-| 0x10 | LoraTx | Data bytes (max 256) | TxComplete |
+| ID   | Command    | Payload              | Response   |
+|------|------------|----------------------|------------|
+| 0x01 | GetVersion | None                 | Version    |
+| 0x10 | LoraTx     | Data bytes (max 256) | TxComplete |
 
 ### Responses
 
-| ID | Response | Payload |
-|----|----------|---------|
-| 0x01 | Version | major, minor, patch |
-| 0x10 | TxComplete | None |
-| 0x11 | RxPacket | data, rssi (i16 LE), snr (i8) |
-| 0xFF | Error | status code, original command ID |
+| ID   | Response   | Payload                          |
+|------|------------|----------------------------------|
+| 0x01 | Version    | major, minor, patch              |
+| 0x10 | TxComplete | None                             |
+| 0x11 | RxPacket   | data, rssi (i16 LE), snr (i8)    |
+| 0xFF | Error      | status code, original command ID |
 
 ### Response Format
 
@@ -224,15 +225,15 @@ The host must be ready to receive these at any time.
 
 ### Response Status Codes
 
-| Code | Status |
-|------|--------|
-| 0x00 | Success |
+| Code | Status         |
+|------|----------------|
+| 0x00 | Success        |
 | 0x01 | InvalidCommand |
-| 0x02 | InvalidLength |
-| 0x03 | CrcError |
+| 0x02 | InvalidLength  |
+| 0x03 | CrcError       |
 | 0x04 | InvalidVersion |
-| 0x10 | LoraError |
-| 0x11 | Timeout |
+| 0x10 | LoraError      |
+| 0x11 | Timeout        |
 
 ## Bluetooth LE
 
@@ -240,11 +241,11 @@ The firmware advertises as "WalkieTextie" and provides a Nordic UART Service (NU
 
 ### Nordic UART Service UUIDs
 
-| Characteristic | UUID |
-|---------------|------|
-| Service | 6E400001-B5A3-F393-E0A9-E50E24DCCA9E |
-| RX (write) | 6E400002-B5A3-F393-E0A9-E50E24DCCA9E |
-| TX (notify) | 6E400003-B5A3-F393-E0A9-E50E24DCCA9E |
+| Characteristic | UUID                                 |
+|----------------|--------------------------------------|
+| Service        | 6E400001-B5A3-F393-E0A9-E50E24DCCA9E |
+| RX (write)     | 6E400002-B5A3-F393-E0A9-E50E24DCCA9E |
+| TX (notify)    | 6E400003-B5A3-F393-E0A9-E50E24DCCA9E |
 
 ### Usage
 

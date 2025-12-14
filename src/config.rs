@@ -33,7 +33,7 @@ pub mod tcxo {
 
 /// Default LoRa configuration
 pub mod lora_defaults {
-    /// Frequency in Hz (869.525 MHz - matches Arduino config)
+    /// Frequency in Hz (869.525 MHz)
     pub const FREQUENCY_HZ: u32 = 869_525_000;
     pub const SPREADING_FACTOR: u8 = 11;
     pub const BANDWIDTH_KHZ: u32 = 250;
