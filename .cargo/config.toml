@@ -3,6 +3,10 @@ target = "xtensa-esp32s3-none-elf"
 
 [alias]
 t = "test --target x86_64-unknown-linux-gnu"
+integration = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin integration-tests --"
+lora = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin lora-tests --"
+ble-serial = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-serial-tests --"
+ble-ble = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-ble-tests --"
 
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor"
@@ -19,3 +23,9 @@ ESP_LOG = "INFO"
 # - Host tests: cargo t
 # - Embedded build: cargo +esp build --features embedded --release -Zbuild-std=core,alloc
 # - Flash: espflash flash --port /dev/ttyACM0 target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware
+#
+# Integration tests:
+# - Single device: cargo integration --port /dev/ttyACM0
+# - Two device LoRa: cargo lora --port-a /dev/ttyACM0 --port-b /dev/ttyACM1
+# - BLE via serial: cargo ble-serial --port /dev/ttyACM0
+# - BLE to BLE: cargo ble-ble --port-a /dev/ttyACM0 --port-b /dev/ttyACM1

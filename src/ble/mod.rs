@@ -4,7 +4,5 @@
 //! command/response communication alongside serial.
 
 pub mod service;
-pub mod tasks;
 
 pub use service::NordicUartService;
-pub use tasks::ble_task;

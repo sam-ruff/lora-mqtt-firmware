@@ -1,4 +1,4 @@
-//! BLE tasks for command/response handling
+//! BLE task for command/response handling
 //!
 //! Implements the BLE host task that manages connections and routes
 //! commands/responses through the Nordic UART Service.
@@ -6,11 +6,11 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use trouble_host::prelude::*;
 
+use crate::ble::service::{NordicUartService, NUS_MAX_PACKET_SIZE};
 use crate::commands::{CommandParser, ResponseSerialiser, ResponseStatus};
+use crate::config;
 use crate::dispatcher::{CommandEnvelope, CommandSource, ResponseMessage, COMMAND_CHANNEL, RESPONSE_CHANNEL};
 use crate::protocol::framing::FrameAccumulator;
-
-use super::service::NordicUartService;
 
 /// Device name prefix for BLE advertising
 const DEVICE_NAME_PREFIX: &str = "WalkieTextie-";
@@ -183,7 +183,7 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                                                         Err(response) => {
                                                             // Send error response directly via notification
                                                             let encoded = serialiser.serialise(&response);
-                                                            let mut tx_buf = [0u8; super::service::NUS_MAX_PACKET_SIZE];
+                                                            let mut tx_buf = [0u8; NUS_MAX_PACKET_SIZE];
                                                             let len = encoded.len().min(tx_buf.len());
                                                             tx_buf[..len].copy_from_slice(&encoded[..len]);
                                                             let _ = server.nus.tx.notify(&conn, &tx_buf).await;
@@ -225,7 +225,7 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
 
                         if let Some(response) = response {
                             let encoded = serialiser.serialise(&response);
-                            let mut tx_buf = [0u8; super::service::NUS_MAX_PACKET_SIZE];
+                            let mut tx_buf = [0u8; NUS_MAX_PACKET_SIZE];
                             let len = encoded.len().min(tx_buf.len());
                             tx_buf[..len].copy_from_slice(&encoded[..len]);
                             let _ = server.nus.tx.notify(&conn, &tx_buf).await;
@@ -243,7 +243,7 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
 /// Decode COBS frame and parse command
 fn decode_and_parse(
     parser: &CommandParser,
-    mut frame: heapless::Vec<u8, { crate::config::protocol::MAX_FRAME_SIZE }>,
+    mut frame: heapless::Vec<u8, { config::protocol::MAX_FRAME_SIZE }>,
 ) -> Result<crate::commands::Command, crate::commands::Response> {
     use crate::commands::serialiser::cobs_decode;
 

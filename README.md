@@ -120,15 +120,21 @@ The firmware includes an app descriptor (`esp_app_desc!` macro) required by the 
 
 ## Integration Tests
 
-After flashing the firmware, run the integration tests to verify serial communication.
+After flashing the firmware, run integration tests to verify functionality. Cargo aliases are provided for convenience:
+
+| Alias               | Description                |
+|---------------------|----------------------------|
+| `cargo integration` | Single-device serial tests |
+| `cargo lora`        | Two-device LoRa tests      |
+| `cargo ble-serial`  | BLE tests via serial       |
+| `cargo ble-ble`     | BLE-to-BLE tests           |
 
 ### Single-Device Tests
 
 Tests basic command/response functionality:
 
 ```bash
-cd integration_tests
-cargo run --bin integration-tests -- --port /dev/ttyACM0
+cargo integration --port /dev/ttyACM0
 ```
 
 Options:
@@ -145,8 +151,7 @@ The tests verify:
 Tests bidirectional LoRa communication between two flashed devices:
 
 ```bash
-cd integration_tests
-cargo run --bin lora-tests -- --port-a /dev/ttyACM0 --port-b /dev/ttyACM1
+cargo lora --port-a /dev/ttyACM0 --port-b /dev/ttyACM1
 ```
 
 Options:
