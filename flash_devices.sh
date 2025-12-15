@@ -5,7 +5,7 @@
 # Usage:
 #   ./flash_devices.sh                           # Flash all detected ttyACM ports
 #   ./flash_devices.sh /dev/ttyACM0              # Flash to specific port
-#   ./flash_devices.sh /dev/ttyACM0 /dev/ttyACM1 # Flash to multiple ports in parallel
+#   ./flash_devices.sh /dev/ttyACM0 /dev/ttyACM1 # Flash to multiple ports sequentially
 #
 # Note: Devices must be in bootloader mode before flashing:
 #   1. Hold BOOT button
@@ -68,49 +68,26 @@ echo "Building firmware..."
 cargo +esp build --features embedded --release -Zbuild-std=core,alloc || { echo "Build failed!"; exit 1; }
 echo "Firmware built successfully."
 
-# Flash devices in parallel with coloured output
+# Flash devices sequentially (one at a time)
 echo ""
-echo "Flashing ${#DEVICES[@]} device(s) in parallel..."
+echo "Flashing ${#DEVICES[@]} device(s) sequentially..."
 
 # Colours for different devices
 COLOURS=('\033[0;32m' '\033[0;34m' '\033[0;35m' '\033[0;36m')  # green, blue, magenta, cyan
 RESET='\033[0m'
 
-# Create temp directory for status files
-TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
-
-# Launch flash processes in parallel with coloured output
-PIDS=()
+FAILED=()
 for i in "${!DEVICES[@]}"; do
     PORT="${DEVICES[$i]}"
     COLOUR="${COLOURS[$((i % ${#COLOURS[@]}))]}"
     PORT_NAME=$(basename $PORT)
-    (
-        set -o pipefail
-        espflash flash --no-skip --port "$PORT" "$TARGET_BUILD" 2>&1 | while IFS= read -r line; do
-            echo -e "${COLOUR}[${PORT_NAME}]${RESET} $line"
-        done
-        if [ $? -eq 0 ]; then
-            echo "success" > "$TEMP_DIR/$PORT_NAME.status"
-        else
-            echo "failed" > "$TEMP_DIR/$PORT_NAME.status"
-        fi
-    ) &
-    PIDS+=($!)
-done
 
-# Wait for all flash processes to complete
-for PID in "${PIDS[@]}"; do
-    wait $PID 2>/dev/null || true
-done
+    echo ""
+    echo -e "${COLOUR}[${PORT_NAME}]${RESET} Flashing $PORT (device $((i+1)) of ${#DEVICES[@]})..."
+    echo ""
 
-# Collect results
-echo ""
-FAILED=()
-for PORT in "${DEVICES[@]}"; do
-    PORT_NAME=$(basename $PORT)
-    if [ -f "$TEMP_DIR/$PORT_NAME.status" ] && [ "$(cat $TEMP_DIR/$PORT_NAME.status)" = "success" ]; then
+    # Run espflash directly (no pipe) to preserve progress bar output
+    if espflash flash --no-skip --port "$PORT" "$TARGET_BUILD"; then
         echo -e "\033[0;32m$PORT flashed successfully.\033[0m"
     else
         echo -e "\033[0;31m$PORT FAILED.\033[0m"

@@ -524,11 +524,11 @@ where
         // Wait for TX done (10 second timeout)
         let irq_status = self.wait_for_irq(10000).await?;
 
-        // Clear IRQ
-        self.clear_irq(0xFFFF).await?;
+        // Clear IRQ after reading (Semtech pattern)
+        self.clear_irq(irq_status).await?;
 
-        // Return to RX mode (like Arduino's startReceive after transmit)
-        self.start_receive_mode().await?;
+        // NOTE: Don't call start_receive_mode() here.
+        // The lora_task will call receive() which handles RX mode re-entry.
 
         if irq_status & irq::TX_DONE != 0 {
             Ok(())
@@ -542,13 +542,40 @@ where
             return Err(LoraError::NotInitialised);
         }
 
-        // Set to standby
-        self.set_standby_internal().await?;
+        // === Check for pending packet (Semtech pattern) ===
+        // If radio was in continuous RX and packet arrived, DIO1 will be high
+        if self.dio1.is_high().unwrap_or(false) {
+            let irq_status = self.get_irq_status().await?;
 
-        // Set packet parameters (max length, will read actual from header)
+            // Clear IRQ after reading (Semtech pattern: read -> clear -> process)
+            self.clear_irq(irq_status).await?;
+
+            if irq_status & irq::RX_DONE != 0 {
+                // Check for CRC error
+                if irq_status & irq::CRC_ERR != 0 {
+                    // Re-enter RX mode before returning error
+                    self.start_receive_mode().await?;
+                    return Err(LoraError::CrcError);
+                }
+
+                // Read the pending packet
+                let (payload_len, buffer_offset) = self.get_rx_buffer_status().await?;
+                let data = self.read_buffer(buffer_offset, payload_len as usize).await?;
+                let (rssi, snr) = self.get_packet_status().await?;
+
+                // Re-enter continuous RX mode for background listening
+                self.start_receive_mode().await?;
+
+                return Ok(RxPacket { data, rssi, snr });
+            }
+            // Other IRQ (timeout from previous op, etc) - continue to fresh RX
+        }
+
+        // === No pending packet, do normal RX with timeout ===
+        self.set_standby_internal().await?;
         self.set_packet_params(MAX_LORA_PAYLOAD as u8).await?;
 
-        // Configure IRQ for RX done, timeout, CRC error
+        // Configure and clear IRQ
         self.configure_irq(irq::RX_DONE | irq::TIMEOUT | irq::CRC_ERR)
             .await?;
         self.clear_irq(0xFFFF).await?;
@@ -575,32 +602,35 @@ where
         // Wait for RX done or timeout
         let irq_status = self.wait_for_irq(timeout_ms + 1000).await?;
 
-        // Clear IRQ
-        self.clear_irq(0xFFFF).await?;
+        // Clear IRQ after reading (Semtech pattern)
+        self.clear_irq(irq_status).await?;
 
         // Check for timeout
         if irq_status & irq::TIMEOUT != 0 {
+            // Re-enter continuous RX for background listening
+            self.start_receive_mode().await?;
             return Err(LoraError::Timeout);
         }
 
         // Check for CRC error
         if irq_status & irq::CRC_ERR != 0 {
+            self.start_receive_mode().await?;
             return Err(LoraError::CrcError);
         }
 
-        // Check for RX done
+        // Verify RX done
         if irq_status & irq::RX_DONE == 0 {
+            self.start_receive_mode().await?;
             return Err(LoraError::ReceiveFailed);
         }
 
-        // Get buffer status
+        // Read packet
         let (payload_len, buffer_offset) = self.get_rx_buffer_status().await?;
-
-        // Read data
         let data = self.read_buffer(buffer_offset, payload_len as usize).await?;
-
-        // Get packet status
         let (rssi, snr) = self.get_packet_status().await?;
+
+        // Re-enter continuous RX mode
+        self.start_receive_mode().await?;
 
         Ok(RxPacket { data, rssi, snr })
     }

@@ -18,6 +18,7 @@ use crate::protocol::{build_command, cobs_decode, cobs_encode, build_command_pay
 /// to avoid hanging on debug ports that may not handle reads properly.
 pub fn find_data_ports() -> Result<Vec<String>> {
     let ports = serialport::available_ports()?;
+
     let mut data_ports = Vec::new();
 
     for port_info in ports {
@@ -35,6 +36,7 @@ pub fn find_data_ports() -> Result<Vec<String>> {
                 }
             }
         }
+        println!("Checking port: {:?}", port_info.port_name);
 
         // Try to connect and send GetVersion
         if let Ok(mut client) = DeviceClient::new(&port_info.port_name, 115200) {

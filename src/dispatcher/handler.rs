@@ -103,6 +103,7 @@ impl CommandDispatcher {
 
     /// Handle GetVersion command
     fn handle_get_version(&self) -> Response {
+        crate::debug!("Version requested. Responding {}.{}.{}", protocol::VERSION_MAJOR, protocol::VERSION_MINOR, protocol::VERSION_PATCH);
         Response::Version {
             major: protocol::VERSION_MAJOR,
             minor: protocol::VERSION_MINOR,

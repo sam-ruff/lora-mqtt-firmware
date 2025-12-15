@@ -8,6 +8,7 @@ use core::fmt::Write;
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_time::Instant;
 use embassy_usb::class::cdc_acm::Sender;
 use esp_hal::otg_fs::asynch::Driver;
 use heapless::String;
@@ -40,11 +41,23 @@ pub async fn debug_writer_task(mut sender: Sender<'static, Driver<'static>>) {
     }
 }
 
-/// Format and write a debug message.
+/// Format and write a debug message with timestamp.
 ///
 /// This is the implementation behind the debug! macro.
+/// Messages are prefixed with a timestamp in [MM:SS.mmm] format.
 pub fn debug_print(args: core::fmt::Arguments) {
     let mut s: String<MAX_DEBUG_MSG_LEN> = String::new();
+
+    // Get time since boot
+    let now = Instant::now();
+    let total_ms = now.as_millis();
+    let total_secs = total_ms / 1000;
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    let ms = total_ms % 1000;
+
+    // Format timestamp as [MM:SS.mmm]
+    let _ = write!(s, "[{:02}:{:02}.{:03}] ", mins, secs, ms);
     let _ = s.write_fmt(args);
     let _ = DEBUG_CHANNEL.try_send(s);
 }
