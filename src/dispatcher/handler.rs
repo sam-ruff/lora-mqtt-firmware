@@ -90,6 +90,11 @@ impl CommandDispatcher {
     ) -> Response {
         match command {
             Command::GetVersion => self.handle_get_version(),
+            Command::Reboot => {
+                // Admin commands are handled by admin_task before reaching dispatcher
+                // For non-embedded (tests), return an error
+                Response::error(ResponseStatus::InvalidCommand, command.id())
+            }
             Command::LoraTx { data } => self.handle_lora_tx(radio, &data).await,
         }
     }

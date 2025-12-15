@@ -61,6 +61,12 @@ impl CommandParser {
                 }
                 Ok(Command::GetVersion)
             }
+            Some(CommandId::Reboot) => {
+                if length != 0 {
+                    return Err(ResponseStatus::InvalidLength);
+                }
+                Ok(Command::Reboot)
+            }
             Some(CommandId::LoraTx) => {
                 if length == 0 || length > MAX_LORA_PAYLOAD {
                     return Err(ResponseStatus::InvalidLength);
@@ -175,5 +181,20 @@ mod tests {
         let parser = CommandParser::new();
         let result = parser.parse(&[0x01, 0x01, 0x00]);
         assert_eq!(result, Err(ResponseStatus::InvalidLength));
+    }
+
+    #[test]
+    fn test_parse_reboot() {
+        let parser = CommandParser::new();
+        let frame = build_frame(0x03, &[]);
+
+        let cmd = parser.parse(&frame).expect("Should parse");
+        assert!(matches!(cmd, Command::Reboot));
+
+        // Print COBS-encoded bytes
+        let mut cobs_buf = [0u8; 64];
+        let cobs_len = corncobs::encode_buf(&frame, &mut cobs_buf);
+        println!("Reboot COBS bytes: {:02x?}", &cobs_buf[..cobs_len]);
+        println!("For shell printf: {}", cobs_buf[..cobs_len].iter().map(|b| format!("\\x{:02x}", b)).collect::<String>());
     }
 }

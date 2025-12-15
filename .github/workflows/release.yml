@@ -22,7 +22,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run unit tests
-        run: cargo +stable test
+        run: cargo +stable test --target x86_64-unknown-linux-gnu
 
   build:
     name: Build Firmware

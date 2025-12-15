@@ -2,11 +2,13 @@
 //!
 //! Contains all async tasks for the firmware, organised by functionality.
 
+pub mod admin;
 pub mod ble;
 pub mod led;
 pub mod lora;
 pub mod serial;
 
+pub use admin::{admin_task, AdminCommand, AdminReceiver, AdminSender, ADMIN_CHANNEL};
 pub use ble::ble_task;
 pub use led::{led_task, LedReceiver, LedSender, LED_CHANNEL};
 pub use lora::lora_task;

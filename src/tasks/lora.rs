@@ -3,11 +3,11 @@
 //! Continuously listens for incoming LoRa packets and processes commands
 //! when available, with a maximum latency defined by the RX poll interval.
 
-use crate::commands::Response;
-use crate::debug;
+use crate::commands::{Command, Response};
 use crate::dispatcher::{CommandDispatcher, ResponseMessage, RESPONSE_CHANNEL};
 use crate::lora::traits::{LoraError, LoraRadio};
 
+use super::admin::{AdminCommand, ADMIN_CHANNEL};
 use super::led::LedFlashDuration;
 use super::serial::CommandReceiver;
 use super::LedSender;
@@ -72,11 +72,17 @@ pub async fn lora_task<R: LoraRadio>(
 
         // Process any pending commands (non-blocking check)
         while let Ok(envelope) = command_receiver.try_receive() {
-            // Signal LED flash for TX command (non-blocking)
+            // Signal LED flash for command (non-blocking)
             let _ = led_sender.try_send(LedFlashDuration::Default);
 
+            // Forward admin commands to admin task
+            if let Command::Reboot = &envelope.command {
+                let _ = ADMIN_CHANNEL.try_send(AdminCommand::Reboot);
+                continue; // Admin task handles this, no response needed
+            }
+
             // Log TX command if it's a LoraTx
-            if let crate::commands::Command::LoraTx { ref data } = envelope.command {
+            if let Command::LoraTx { ref data } = envelope.command {
                 if let Ok(s) = core::str::from_utf8(data) {
                     crate::debug!("LoRa TX: '{}'", s);
                 } else {
@@ -86,8 +92,11 @@ pub async fn lora_task<R: LoraRadio>(
 
             let response = dispatcher.dispatch(&mut radio, envelope.command).await;
 
-            // Log TX result
+            // Log response
             match &response {
+                crate::commands::Response::Version { major, minor, patch } => {
+                    crate::debug!("Version: {}.{}.{}", major, minor, patch);
+                }
                 crate::commands::Response::TxComplete => {
                     crate::debug!("LoRa TX: Complete");
                 }

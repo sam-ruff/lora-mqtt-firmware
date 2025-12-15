@@ -1,5 +1,7 @@
 //! Protocol definitions matching the firmware.
 
+#![allow(dead_code)]
+
 use crc::{Crc, CRC_16_XMODEM};
 
 /// Protocol version (must match firmware)

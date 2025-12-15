@@ -1,5 +1,7 @@
 //! Device communication client.
 
+#![allow(dead_code)]
+
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
@@ -10,6 +12,10 @@ use crate::protocol::{build_command, cobs_decode, cobs_encode, build_command_pay
 
 /// Find available data ports by scanning ttyACM devices and testing with GetVersion.
 /// Returns a list of port names that respond to GetVersion (these are the data ports).
+///
+/// Note: With dual CDC-ACM devices, even-numbered ports (ACM0, ACM2, etc.) are data ports
+/// and odd-numbered ports (ACM1, ACM3, etc.) are debug ports. We only probe even ports
+/// to avoid hanging on debug ports that may not handle reads properly.
 pub fn find_data_ports() -> Result<Vec<String>> {
     let ports = serialport::available_ports()?;
     let mut data_ports = Vec::new();
@@ -18,6 +24,16 @@ pub fn find_data_ports() -> Result<Vec<String>> {
         // Filter to ttyACM devices (CDC-ACM)
         if !port_info.port_name.contains("ttyACM") {
             continue;
+        }
+
+        // Only probe even-numbered ports (data ports in dual CDC setup)
+        // Odd ports are debug ports and may hang on reads
+        if let Some(num_str) = port_info.port_name.strip_prefix("/dev/ttyACM") {
+            if let Ok(num) = num_str.parse::<u32>() {
+                if num % 2 != 0 {
+                    continue; // Skip odd-numbered (debug) ports
+                }
+            }
         }
 
         // Try to connect and send GetVersion
@@ -105,6 +121,8 @@ impl DeviceClient {
     /// Set the response timeout.
     pub fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout;
+        // Also update the serial port's read timeout
+        let _ = self.port.set_timeout(timeout);
     }
 
     /// Clear any pending data in the serial buffer.

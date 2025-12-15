@@ -1,5 +1,7 @@
 //! BLE client for communicating with WalkieTextie device via Nordic UART Service.
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
 use std::time::Duration;
 

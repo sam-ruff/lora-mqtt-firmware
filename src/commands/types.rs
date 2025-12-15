@@ -14,6 +14,8 @@ use heapless::Vec;
 pub enum CommandId {
     /// Get firmware version
     GetVersion = 0x01,
+    /// Normal reboot (restart firmware)
+    Reboot = 0x03,
     /// Transmit LoRa packet
     LoraTx = 0x10,
 }
@@ -23,6 +25,7 @@ impl CommandId {
     pub fn from_byte(byte: u8) -> Option<Self> {
         match byte {
             0x01 => Some(Self::GetVersion),
+            0x03 => Some(Self::Reboot),
             0x10 => Some(Self::LoraTx),
             _ => None,
         }
@@ -35,6 +38,9 @@ pub enum Command {
     /// Get firmware version
     GetVersion,
 
+    /// Normal reboot (restart firmware)
+    Reboot,
+
     /// Transmit LoRa packet
     LoraTx { data: Vec<u8, MAX_LORA_PAYLOAD> },
 }
@@ -44,6 +50,7 @@ impl Command {
     pub fn id(&self) -> CommandId {
         match self {
             Command::GetVersion => CommandId::GetVersion,
+            Command::Reboot => CommandId::Reboot,
             Command::LoraTx { .. } => CommandId::LoraTx,
         }
     }

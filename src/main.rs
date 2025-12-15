@@ -43,7 +43,7 @@ mod usb;
 
 use dispatcher::COMMAND_CHANNEL;
 use lora::driver::{Sx1262Driver, Sx1262Pins};
-use tasks::{CommandReceiver, CommandSender, LedReceiver, LedSender, LED_CHANNEL};
+use tasks::{AdminReceiver, CommandReceiver, CommandSender, LedReceiver, LedSender, ADMIN_CHANNEL, LED_CHANNEL};
 
 /// Static executor for embassy
 static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
@@ -209,6 +209,7 @@ async fn async_main(
     let command_receiver = COMMAND_CHANNEL.receiver();
     let led_sender = LED_CHANNEL.sender();
     let led_receiver = LED_CHANNEL.receiver();
+    let admin_receiver = ADMIN_CHANNEL.receiver();
 
     // Split CDC classes into sender/receiver and wrap for embedded_io_async
     let (data_tx, data_rx) = data_cdc.split();
@@ -236,6 +237,7 @@ async fn async_main(
 
     // Spawn other tasks
     debug!("Starting tasks...");
+    spawner.spawn(admin_wrapper(admin_receiver)).unwrap();
     spawner.spawn(lora_wrapper(lora_driver, command_receiver, led_sender)).unwrap();
     spawner.spawn(led_wrapper(led, led_receiver)).unwrap();
     spawner.spawn(ble_wrapper(ble_controller, device_id)).unwrap();
@@ -267,6 +269,12 @@ async fn serial_writer_wrapper(writer: usb::CdcWriter<'static, UsbDriver>) {
 #[embassy_executor::task]
 async fn debug_writer_wrapper(debug_tx: embassy_usb::class::cdc_acm::Sender<'static, UsbDriver>) {
     debug::debug_writer_task(debug_tx).await;
+}
+
+/// Wrapper task for admin commands (reboot, etc.)
+#[embassy_executor::task]
+async fn admin_wrapper(receiver: AdminReceiver) {
+    tasks::admin_task(receiver).await;
 }
 
 /// Wrapper task for LED control
