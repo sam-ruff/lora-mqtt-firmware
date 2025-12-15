@@ -144,9 +144,6 @@ fn main() -> ! {
     // Build the USB device
     let usb_device = builder.build();
 
-    // Initialise debug output
-    debug::init();
-
     // Read unique device ID from eFuse MAC address (last 3 bytes)
     let mac = esp_hal::efuse::Efuse::read_base_mac_address();
     let device_id: [u8; 3] = [mac[3], mac[4], mac[5]];
