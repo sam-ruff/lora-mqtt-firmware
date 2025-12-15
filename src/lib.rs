@@ -11,5 +11,3 @@ pub mod ble;
 pub mod dispatcher;
 #[cfg(feature = "embedded")]
 pub mod lora;
-#[cfg(feature = "embedded")]
-pub mod serial;
