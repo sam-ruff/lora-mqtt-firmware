@@ -258,19 +258,20 @@ Protocol version is currently `1`. The firmware will reject commands with mismat
 
 ### Commands
 
-| ID   | Command    | Payload              | Response   |
-|------|------------|----------------------|------------|
-| 0x01 | GetVersion | None                 | Version    |
-| 0x10 | LoraTx     | Data bytes (max 256) | TxComplete |
+| ID   | Command    | Payload              | Response   | Description                        |
+|------|------------|----------------------|------------|------------------------------------|
+| 0x01 | GetVersion | None                 | Version    | Returns firmware version           |
+| 0x03 | Reboot     | None                 | None       | Reboots the device (no response)   |
+| 0x10 | LoraTx     | Data bytes (max 256) | TxComplete | Transmits data over LoRa           |
 
 ### Responses
 
-| ID   | Response   | Payload                          |
-|------|------------|----------------------------------|
-| 0x01 | Version    | major, minor, patch              |
-| 0x10 | TxComplete | None                             |
-| 0x11 | RxPacket   | data, rssi (i16 LE), snr (i8)    |
-| 0xFF | Error      | status code, original command ID |
+| ID   | Response   | Payload                          | Description                              |
+|------|------------|----------------------------------|------------------------------------------|
+| 0x01 | Version    | major, minor, patch (3 bytes)    | Firmware version response                |
+| 0x10 | TxComplete | None                             | LoRa transmission completed successfully |
+| 0x11 | RxPacket   | data, rssi (i16 LE), snr (i8)    | Received LoRa packet (unsolicited)       |
+| 0xFF | Error      | status code, original command ID | Error response with status and cmd ID    |
 
 ### Response Format
 
@@ -293,15 +294,71 @@ The host must be ready to receive these at any time.
 
 ### Response Status Codes
 
-| Code | Status         |
-|------|----------------|
-| 0x00 | Success        |
-| 0x01 | InvalidCommand |
-| 0x02 | InvalidLength  |
-| 0x03 | CrcError       |
-| 0x04 | InvalidVersion |
-| 0x10 | LoraError      |
-| 0x11 | Timeout        |
+| Code | Status         | Description                              |
+|------|----------------|------------------------------------------|
+| 0x00 | Success        | Command executed successfully            |
+| 0x01 | InvalidCommand | Unknown command ID                       |
+| 0x02 | InvalidLength  | Payload length invalid for command       |
+| 0x03 | CrcError       | CRC-16 checksum mismatch                 |
+| 0x04 | InvalidVersion | Protocol version mismatch                |
+| 0x10 | LoraError      | LoRa radio error during operation        |
+| 0x11 | Timeout        | Operation timed out                      |
+
+### Example Frames
+
+All examples show the complete COBS-encoded frame including the zero delimiter.
+
+**GetVersion Command:**
+```
+Raw:    01 01 00 00 64 0b       (version=1, cmd=0x01, len=0, crc=0x0b64)
+COBS:   03 01 01 01 03 64 0b 00
+```
+
+**GetVersion Response (v0.1.0):**
+```
+Raw:    01 01 03 00 00 01 00 15 b7    (version=1, resp=0x01, len=3, payload=[0,1,0], crc)
+COBS:   04 01 01 03 05 01 01 15 b7 00
+```
+
+**Reboot Command:**
+```
+Raw:    01 03 00 00 e4 2f       (version=1, cmd=0x03, len=0, crc=0x2fe4)
+COBS:   03 01 03 01 03 e4 2f 00
+```
+
+**LoraTx Command ("Hello"):**
+```
+Raw:    01 10 05 00 48 65 6c 6c 6f [crc16]
+COBS:   [COBS-encoded bytes] 00
+```
+
+**Error Response (InvalidCommand for cmd 0xFE):**
+```
+Raw:    01 ff 02 00 01 fe [crc16]    (status=0x01, original_cmd=0xFE)
+COBS:   [COBS-encoded bytes] 00
+```
+
+### CRC-16 Calculation
+
+The CRC-16 uses the XMODEM polynomial (0x1021) with initial value 0x0000. The CRC is calculated over the bytes: `[version][cmd_id][length_lo][length_hi][payload...]`.
+
+Python example:
+```python
+import crcmod
+crc16 = crcmod.predefined.mkCrcFun('xmodem')
+checksum = crc16(bytes([0x01, 0x01, 0x00, 0x00]))  # GetVersion: 0x0b64
+```
+
+### COBS Encoding
+
+COBS (Consistent Overhead Byte Stuffing) encodes data to eliminate zero bytes, using 0x00 as frame delimiter. The firmware uses the `corncobs` implementation which appends the zero delimiter automatically.
+
+Python example:
+```python
+from cobs import cobs
+raw_frame = bytes([0x01, 0x01, 0x00, 0x00, 0x64, 0x0b])
+encoded = cobs.encode(raw_frame) + b'\x00'  # Add delimiter
+```
 
 ## Bluetooth LE
 
