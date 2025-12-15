@@ -3,6 +3,7 @@ target = "xtensa-esp32s3-none-elf"
 
 [alias]
 t = "test --target x86_64-unknown-linux-gnu"
+c = "clippy --target x86_64-unknown-linux-gnu"
 integration = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin integration-tests -- --port auto"
 lora = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin lora-tests -- --port-a auto --port-b auto"
 ble-serial = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-serial-tests -- --port-b auto"

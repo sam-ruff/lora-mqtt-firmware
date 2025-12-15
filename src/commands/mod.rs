@@ -4,4 +4,4 @@ pub mod types;
 
 pub use parser::CommandParser;
 pub use serialiser::ResponseSerialiser;
-pub use types::{Command, CommandId, Response, ResponseStatus};
+pub use types::{Command, Response, ResponseStatus};

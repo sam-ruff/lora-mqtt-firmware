@@ -4,5 +4,3 @@
 //! command/response communication alongside serial.
 
 pub mod service;
-
-pub use service::NordicUartService;

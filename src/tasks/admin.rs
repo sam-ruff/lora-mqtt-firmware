@@ -3,7 +3,7 @@
 //! Handles administrative commands that don't belong in other tasks.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_sync::channel::{Channel, Receiver};
 #[cfg(feature = "embedded")]
 use embassy_time::{Duration, Timer};
 
@@ -16,9 +16,6 @@ pub enum AdminCommand {
 
 /// Channel for admin commands
 pub static ADMIN_CHANNEL: Channel<CriticalSectionRawMutex, AdminCommand, 4> = Channel::new();
-
-/// Type alias for the admin command sender
-pub type AdminSender = Sender<'static, CriticalSectionRawMutex, AdminCommand, 4>;
 
 /// Type alias for the admin command receiver
 pub type AdminReceiver = Receiver<'static, CriticalSectionRawMutex, AdminCommand, 4>;

@@ -1,31 +1,7 @@
-//! Hardware configuration constants for the ESP32-S3 with WIO-SX1262
-
-/// LED pin
-pub mod led {
-    pub const PIN: u8 = 48;
-}
-
-/// SPI pins for LoRa module
-pub mod spi {
-    pub const SCLK: u8 = 7;
-    pub const MISO: u8 = 8;
-    pub const MOSI: u8 = 9;
-}
-
-/// LoRa control pins
-pub mod lora_pins {
-    pub const NSS: u8 = 41;
-    pub const DIO1: u8 = 39;
-    pub const NRST: u8 = 42;
-    pub const BUSY: u8 = 40;
-    pub const DIO2: u8 = 38;
-}
+//! Configuration constants for the ESP32-S3 with WIO-SX1262
 
 /// TCXO configuration
 pub mod tcxo {
-    /// TCXO voltage in volts (1.8V for WIO-SX1262)
-    pub const VOLTAGE_V: f32 = 1.8;
-
     /// TCXO voltage code for SX1262 register
     /// 0x02 = 1.8V
     pub const VOLTAGE_CODE: u8 = 0x02;
@@ -41,13 +17,6 @@ pub mod lora_defaults {
     pub const CODING_RATE: u8 = 8;
     /// TX power in dBm (supports -9 to +22)
     pub const TX_POWER_DBM: i8 = 22;
-}
-
-/// Serial configuration
-pub mod serial {
-    pub const BAUD_RATE: u32 = 115200;
-    pub const RX_BUFFER_SIZE: usize = 512;
-    pub const TX_BUFFER_SIZE: usize = 512;
 }
 
 /// Protocol constants

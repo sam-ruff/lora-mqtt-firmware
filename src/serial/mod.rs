@@ -1,5 +1,3 @@
-pub mod reader;
-pub mod traits;
-
-pub use reader::SerialCommandReader;
-pub use traits::{SerialError, SerialPort};
+//! Serial module (placeholder)
+//!
+//! The serial command reading functionality is implemented directly in tasks/serial.rs.

@@ -33,11 +33,6 @@ pub fn init() {
     });
 }
 
-/// Check if debug output is initialised.
-pub fn is_init() -> bool {
-    DEBUG_BUFFER.lock(|cell| cell.borrow().is_some())
-}
-
 /// Write a debug message to the buffer.
 ///
 /// This is non-blocking and will truncate if the message is too long.

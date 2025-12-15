@@ -8,11 +8,18 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embedded_io_async::{Read, Write};
 
-use crate::commands::{CommandParser, Response, ResponseSerialiser};
+use crate::commands::{Command, CommandParser, Response, ResponseSerialiser, ResponseStatus};
 use crate::config;
 use crate::dispatcher::{CommandEnvelope, CommandSource, ResponseMessage, RESPONSE_CHANNEL};
 use crate::protocol::framing::FrameAccumulator;
-use crate::serial::reader::ReadResult;
+
+/// Result of attempting to parse a frame
+enum ReadResult {
+    /// Successfully parsed a command
+    Command(Command),
+    /// Parse error (should send error response)
+    ParseError(ResponseStatus, u8),
+}
 
 /// Type alias for the command channel sender
 pub type CommandSender = Sender<'static, CriticalSectionRawMutex, CommandEnvelope, 8>;
@@ -67,9 +74,6 @@ pub async fn serial_reader_task<R: Read>(
                             }
                             None => {
                                 // Invalid frame, ignore
-                            }
-                            Some(ReadResult::SerialError(_)) => {
-                                // Shouldn't happen in frame processing
                             }
                         }
                     }

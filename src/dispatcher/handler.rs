@@ -21,6 +21,7 @@ pub enum CommandSource {
     /// Command received via BLE
     Ble,
     /// Command received via WiFi (future)
+    #[allow(dead_code)]
     WiFi,
 }
 
@@ -45,6 +46,7 @@ pub enum ResponseMessage {
     /// Command response - should be filtered by source
     Command {
         source: CommandSource,
+        #[allow(dead_code)]
         sequence_id: u16,
         response: Response,
     },

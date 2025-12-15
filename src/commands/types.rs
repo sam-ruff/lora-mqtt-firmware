@@ -66,6 +66,7 @@ impl CommandId {
 
 /// Parsed command with associated data
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)] // Boxing not available in no_std
 pub enum Command {
     /// Get firmware version
     GetVersion,
@@ -95,6 +96,7 @@ impl Command {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResponseStatus {
     /// Command executed successfully (0x00)
+    #[allow(dead_code)]
     Success = 0x00,
 
     /// Unknown or invalid command ID (0x01)
@@ -134,6 +136,7 @@ pub enum ResponseStatus {
 /// | 0x11 | RxPacket   | Received LoRa packet           |
 /// | 0xFF | Error      | Error with status code         |
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // Boxing not available in no_std
 pub enum Response {
     /// Version response (ID: 0x01)
     ///

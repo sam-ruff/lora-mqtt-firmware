@@ -109,6 +109,7 @@ impl Default for ResponseSerialiser {
 }
 
 /// COBS decode using corncobs (for testing/verification)
+#[allow(clippy::result_unit_err)]
 pub fn cobs_decode(encoded: &[u8]) -> Result<Vec<u8, MAX_FRAME_SIZE>, ()> {
     let mut output: Vec<u8, MAX_FRAME_SIZE> = Vec::new();
     output.resize(encoded.len(), 0).map_err(|_| ())?;

@@ -43,7 +43,6 @@ mod reg {
 /// Standby modes
 mod standby {
     pub const STDBY_RC: u8 = 0x00;
-    pub const STDBY_XOSC: u8 = 0x01;
 }
 
 /// Packet types

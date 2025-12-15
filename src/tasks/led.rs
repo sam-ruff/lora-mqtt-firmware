@@ -15,6 +15,7 @@ pub enum LedFlashDuration {
     /// Use the default flash duration
     Default,
     /// Use a custom flash duration in milliseconds
+    #[allow(dead_code)]
     Ms(u64),
 }
 

@@ -49,16 +49,19 @@ impl FrameAccumulator {
     }
 
     /// Reset the accumulator, discarding any partial frame.
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.buffer.clear();
     }
 
-    /// Returns true if the accumulator has data (partial frame in progress).
-    pub fn has_data(&self) -> bool {
-        !self.buffer.is_empty()
+    /// Returns true if the buffer is empty (no partial frame in progress).
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
     }
 
     /// Returns the current number of bytes in the buffer.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.buffer.len()
     }
@@ -88,7 +91,7 @@ mod tests {
         assert_eq!(frame.as_slice(), &[0x01, 0x02, 0x03]);
 
         // Accumulator should be empty now
-        assert!(!acc.has_data());
+        assert!(acc.is_empty());
     }
 
     #[test]
@@ -97,7 +100,7 @@ mod tests {
 
         // Leading delimiter should be ignored
         assert!(acc.push(0x00).is_none());
-        assert!(!acc.has_data());
+        assert!(acc.is_empty());
 
         // Multiple delimiters should be ignored
         assert!(acc.push(0x00).is_none());
@@ -128,10 +131,10 @@ mod tests {
 
         acc.push(0x01);
         acc.push(0x02);
-        assert!(acc.has_data());
+        assert!(!acc.is_empty());
 
         acc.reset();
-        assert!(!acc.has_data());
+        assert!(acc.is_empty());
 
         // Should be able to receive new frame
         acc.push(0x03);

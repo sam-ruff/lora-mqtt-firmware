@@ -90,6 +90,7 @@ pub trait LoraRadio {
     fn configure(&mut self, config: &LoraConfig) -> impl Future<Output = Result<(), LoraError>>;
 
     /// Set the radio to standby mode
+    #[allow(dead_code)]
     fn set_standby(&mut self) -> impl Future<Output = Result<(), LoraError>>;
 }
 
