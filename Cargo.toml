@@ -51,9 +51,6 @@ heapless = "0.8"
 # CRC calculation
 crc = "3.0"
 
-# Logging
-log = "0.4"
-
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 

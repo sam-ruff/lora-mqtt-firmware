@@ -37,7 +37,6 @@ mod debug;
 mod dispatcher;
 mod lora;
 mod protocol;
-mod serial;
 mod tasks;
 mod usb;
 
