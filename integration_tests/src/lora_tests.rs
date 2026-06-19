@@ -60,14 +60,9 @@ fn main() -> anyhow::Result<()> {
     verify_device(&mut device_a, "A")?;
     verify_device(&mut device_b, "B")?;
 
-    // Allow time for LoRa radios to enter RX mode after init
-    // On first boot, the radio needs time to complete its initialisation
-    println!("Waiting for LoRa radios to initialise...");
-    std::thread::sleep(Duration::from_millis(500));
-
-    // Clear any packets that may have been received during init
-    device_a.clear_buffer()?;
-    device_b.clear_buffer()?;
+    // No warm-up needed: a successful GetVersion above means each device's LoRa
+    // task has already finished init() (including calibration), so the radios are
+    // listening. Test 1 below therefore genuinely exercises the very first packet.
 
     println!("\n{}", "Running LoRa tests...".bold());
     println!();

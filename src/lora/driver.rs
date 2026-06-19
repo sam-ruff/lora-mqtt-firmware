@@ -4,6 +4,7 @@
 
 use crate::config::protocol::MAX_LORA_PAYLOAD;
 use crate::config::tcxo;
+use crate::lora::calibration::{image_cal_params, CALIBRATE_ALL};
 use crate::lora::traits::{LoraConfig, LoraError, LoraRadio, RxPacket};
 use embassy_time::{Duration, Timer};
 use embedded_hal::digital::{InputPin, OutputPin};
@@ -23,6 +24,8 @@ mod cmd {
     pub const SET_PA_CONFIG: u8 = 0x95;
     pub const SET_DIO3_AS_TCXO_CTRL: u8 = 0x97;
     pub const SET_DIO2_AS_RF_SWITCH_CTRL: u8 = 0x9D;
+    pub const CALIBRATE: u8 = 0x89;
+    pub const CALIBRATE_IMAGE: u8 = 0x98;
     pub const SET_TX_PARAMS: u8 = 0x8E;
     pub const WRITE_BUFFER: u8 = 0x0E;
     pub const READ_BUFFER: u8 = 0x1E;
@@ -39,6 +42,16 @@ mod reg {
     /// Over-current protection register
     pub const OCP_CONFIGURATION: u16 = 0x08E7;
 }
+
+/// Maximum RX payload length advertised to the modem.
+///
+/// The packet-params length field is a single byte, so it is clamped to 255
+/// (`MAX_LORA_PAYLOAD` is 256, which would otherwise truncate to 0).
+const RX_MAX_PAYLOAD_LEN: u8 = if MAX_LORA_PAYLOAD > 255 {
+    255
+} else {
+    MAX_LORA_PAYLOAD as u8
+};
 
 /// Standby modes
 mod standby {
@@ -194,6 +207,24 @@ where
     async fn configure_dio2_rf_switch(&mut self) -> Result<(), LoraError> {
         self.write_command(cmd::SET_DIO2_AS_RF_SWITCH_CTRL, &[0x01])
             .await
+    }
+
+    /// Recalibrate all blocks.
+    ///
+    /// Required after enabling the TCXO: the power-on calibration ran from the
+    /// RC oscillator before the TCXO was available, so the radio must be
+    /// recalibrated or the first TX/RX uses an invalid calibration.
+    async fn calibrate_all(&mut self) -> Result<(), LoraError> {
+        self.write_command(cmd::CALIBRATE, &[CALIBRATE_ALL]).await?;
+        // Calibration drives BUSY high while it runs; allow it to settle.
+        Timer::after(Duration::from_millis(5)).await;
+        self.wait_not_busy().await
+    }
+
+    /// Calibrate image rejection for the configured frequency band.
+    async fn calibrate_image(&mut self, freq_hz: u32) -> Result<(), LoraError> {
+        let (f1, f2) = image_cal_params(freq_hz);
+        self.write_command(cmd::CALIBRATE_IMAGE, &[f1, f2]).await
     }
 
     /// Write to a register
@@ -439,7 +470,7 @@ where
         self.set_standby_internal().await?;
 
         // Set packet parameters for max length
-        self.set_packet_params(MAX_LORA_PAYLOAD as u8).await?;
+        self.set_packet_params(RX_MAX_PAYLOAD_LEN).await?;
 
         // Configure IRQ for RX done, timeout, CRC error
         self.configure_irq(irq::RX_DONE | irq::TIMEOUT | irq::CRC_ERR)
@@ -473,6 +504,11 @@ where
         // Configure TCXO (1.8V)
         self.configure_tcxo().await?;
         Timer::after(Duration::from_millis(10)).await;
+
+        // Recalibrate now the TCXO is running (must be done in STDBY_RC).
+        // Without this the first TX/RX after boot uses the invalid power-on
+        // calibration and the first packet is silently lost.
+        self.calibrate_all().await?;
 
         // Configure DIO2 as RF switch control
         self.configure_dio2_rf_switch().await?;
@@ -573,7 +609,7 @@ where
 
         // === No pending packet, do normal RX with timeout ===
         self.set_standby_internal().await?;
-        self.set_packet_params(MAX_LORA_PAYLOAD as u8).await?;
+        self.set_packet_params(RX_MAX_PAYLOAD_LEN).await?;
 
         // Configure and clear IRQ
         self.configure_irq(irq::RX_DONE | irq::TIMEOUT | irq::CRC_ERR)
@@ -585,7 +621,7 @@ where
         let timeout_val = if timeout_ms == 0 {
             0x000000 // No timeout (continuous RX)
         } else {
-            let us = timeout_ms as u32 * 1000;
+            let us = timeout_ms * 1000;
             let val = us / 16; // Approximate 15.625us
             val.min(0xFFFFFF)
         };
@@ -642,6 +678,9 @@ where
         // Set frequency
         self.set_frequency(config.frequency_hz).await?;
 
+        // Calibrate image rejection for this frequency band
+        self.calibrate_image(config.frequency_hz).await?;
+
         // Set modulation parameters
         self.set_modulation_params(config).await?;
 
@@ -658,5 +697,196 @@ where
 
     async fn set_standby(&mut self) -> Result<(), LoraError> {
         self.set_standby_internal().await
+    }
+}
+
+#[cfg(all(test, feature = "host-test"))]
+mod host_tests {
+    //! Host-side tests that drive the real driver against a recording SPI bus.
+    //!
+    //! Run with: `cargo test --target x86_64-unknown-linux-gnu --features host-test`
+
+    use super::*;
+    use crate::lora::traits::LoraRadio;
+    use core::cell::RefCell;
+    use core::future::Future;
+    use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use std::rc::Rc;
+    use std::vec::Vec as StdVec;
+
+    /// Error type for the mocks (never actually returned).
+    #[derive(Debug)]
+    struct MockError;
+
+    impl embedded_hal::spi::Error for MockError {
+        fn kind(&self) -> embedded_hal::spi::ErrorKind {
+            embedded_hal::spi::ErrorKind::Other
+        }
+    }
+
+    impl embedded_hal::digital::Error for MockError {
+        fn kind(&self) -> embedded_hal::digital::ErrorKind {
+            embedded_hal::digital::ErrorKind::Other
+        }
+    }
+
+    /// SPI bus that records every outbound buffer (first byte is the opcode).
+    #[derive(Clone)]
+    struct RecordingSpi {
+        writes: Rc<RefCell<StdVec<StdVec<u8>>>>,
+    }
+
+    impl embedded_hal::spi::ErrorType for RecordingSpi {
+        type Error = MockError;
+    }
+
+    impl embedded_hal_async::spi::SpiBus<u8> for RecordingSpi {
+        async fn read(&mut self, _words: &mut [u8]) -> Result<(), MockError> {
+            Ok(())
+        }
+
+        async fn write(&mut self, words: &[u8]) -> Result<(), MockError> {
+            self.writes.borrow_mut().push(words.to_vec());
+            Ok(())
+        }
+
+        async fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), MockError> {
+            self.writes.borrow_mut().push(write.to_vec());
+            read.iter_mut().for_each(|b| *b = 0);
+            Ok(())
+        }
+
+        async fn transfer_in_place(&mut self, _words: &mut [u8]) -> Result<(), MockError> {
+            Ok(())
+        }
+
+        async fn flush(&mut self) -> Result<(), MockError> {
+            Ok(())
+        }
+    }
+
+    /// Output pin that ignores writes.
+    struct NoopOut;
+    impl embedded_hal::digital::ErrorType for NoopOut {
+        type Error = MockError;
+    }
+    impl embedded_hal::digital::OutputPin for NoopOut {
+        fn set_low(&mut self) -> Result<(), MockError> {
+            Ok(())
+        }
+        fn set_high(&mut self) -> Result<(), MockError> {
+            Ok(())
+        }
+    }
+
+    /// Input pin that always reads low (BUSY released, no IRQ pending).
+    struct LowPin;
+    impl embedded_hal::digital::ErrorType for LowPin {
+        type Error = MockError;
+    }
+    impl embedded_hal::digital::InputPin for LowPin {
+        fn is_high(&mut self) -> Result<bool, MockError> {
+            Ok(false)
+        }
+        fn is_low(&mut self) -> Result<bool, MockError> {
+            Ok(true)
+        }
+    }
+
+    /// Minimal no-op waker built from core only (avoids extra deps).
+    fn noop_waker() -> Waker {
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(core::ptr::null(), &VTABLE)
+        }
+        fn noop(_: *const ()) {}
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+        unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) }
+    }
+
+    /// Drive a future to completion, advancing the mock clock past any timers.
+    fn run<F: Future>(fut: F) -> F::Output {
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        let mut fut = core::pin::pin!(fut);
+        loop {
+            match fut.as_mut().poll(&mut cx) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => {
+                    embassy_time::MockDriver::get().advance(Duration::from_millis(50));
+                }
+            }
+        }
+    }
+
+    fn build_driver(
+        writes: Rc<RefCell<StdVec<StdVec<u8>>>>,
+    ) -> Sx1262Driver<RecordingSpi, NoopOut, LowPin, NoopOut, LowPin> {
+        let spi = RecordingSpi { writes };
+        Sx1262Driver::new(
+            spi,
+            Sx1262Pins {
+                nss: NoopOut,
+                dio1: LowPin,
+                nrst: NoopOut,
+                busy: LowPin,
+            },
+        )
+    }
+
+    fn first_index(writes: &[StdVec<u8>], opcode: u8) -> Option<usize> {
+        writes.iter().position(|w| w.first() == Some(&opcode))
+    }
+
+    #[test]
+    fn init_calibrates_after_tcxo_and_image_after_frequency() {
+        embassy_time::MockDriver::get().reset();
+        let writes = Rc::new(RefCell::new(StdVec::new()));
+        let mut driver = build_driver(writes.clone());
+
+        run(driver.init()).expect("init should succeed");
+
+        let writes = writes.borrow();
+
+        let tcxo = first_index(&writes, cmd::SET_DIO3_AS_TCXO_CTRL)
+            .expect("TCXO control should be configured");
+        let calibrate =
+            first_index(&writes, cmd::CALIBRATE).expect("Calibrate must be issued during init");
+        assert!(
+            calibrate > tcxo,
+            "Calibrate (0x89) must be issued after SetDIO3AsTcxoCtrl (0x97)"
+        );
+        assert_eq!(
+            writes[calibrate].get(1).copied(),
+            Some(CALIBRATE_ALL),
+            "Calibrate must request all blocks (0x7F)"
+        );
+
+        let frequency =
+            first_index(&writes, cmd::SET_RF_FREQUENCY).expect("RF frequency should be set");
+        let image = first_index(&writes, cmd::CALIBRATE_IMAGE)
+            .expect("CalibrateImage must be issued during init");
+        assert!(
+            image > frequency,
+            "CalibrateImage (0x98) must be issued after SetRfFrequency (0x86)"
+        );
+        assert_eq!(
+            &writes[image][1..3],
+            &[0xD7, 0xDB],
+            "Default 869.525 MHz maps to the 863-870 MHz image band"
+        );
+    }
+
+    #[test]
+    fn calibrate_image_emits_band_bytes() {
+        let writes = Rc::new(RefCell::new(StdVec::new()));
+        let mut driver = build_driver(writes.clone());
+
+        // calibrate_image takes no timer path, so a plain executor is enough.
+        run(driver.calibrate_image(915_000_000)).expect("calibrate_image should succeed");
+
+        let writes = writes.borrow();
+        let image =
+            first_index(&writes, cmd::CALIBRATE_IMAGE).expect("CalibrateImage should be recorded");
+        assert_eq!(&writes[image][1..3], &[0xE1, 0xE9]);
     }
 }

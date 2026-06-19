@@ -4,6 +4,10 @@ pub mod commands;
 pub mod config;
 pub mod protocol;
 
+// The lora module is always present so its dependency-free calibration helpers
+// can be unit-tested on the host; the hardware driver/traits are gated inside it.
+pub mod lora;
+
 // These modules depend on embassy/async features only available with embedded feature
 #[cfg(feature = "embedded")]
 pub mod ble;
@@ -11,8 +15,6 @@ pub mod ble;
 pub mod debug;
 #[cfg(feature = "embedded")]
 pub mod dispatcher;
-#[cfg(feature = "embedded")]
-pub mod lora;
 
 /// No-op debug macro for non-embedded builds (tests).
 /// The real implementation is in src/debug.rs for embedded builds.

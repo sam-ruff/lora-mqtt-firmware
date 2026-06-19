@@ -58,7 +58,7 @@ impl Default for LoraConfig {
 }
 
 /// Received packet with metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RxPacket {
     /// Received data
     pub data: Vec<u8, MAX_LORA_PAYLOAD>,

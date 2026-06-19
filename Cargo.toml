@@ -51,6 +51,9 @@ heapless = "0.8"
 # CRC calculation
 crc = "3.0"
 
+# Critical-section implementation for host-side driver tests (host-test feature)
+critical-section = { version = "1", optional = true }
+
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 
@@ -63,6 +66,18 @@ opt-level = 1
 
 [features]
 default = []
+# Host-side testing of the LoRa driver without the esp-hal toolchain.
+# Pulls in embassy-time's mock time driver plus the embedded-hal traits so the
+# driver can be driven by a recording SPI/pin mock on the host target.
+host-test = [
+    "dep:embassy-time",
+    "embassy-time/mock-driver",
+    "embassy-time/generic-queue-8",
+    "dep:embedded-hal",
+    "dep:embedded-hal-async",
+    "dep:critical-section",
+    "critical-section/std",
+]
 # Enable this for embedded builds
 embedded = [
     "esp-hal",
@@ -72,9 +87,9 @@ embedded = [
     "esp-println",
     "embassy-executor",
     "embassy-sync",
-    "embassy-time",
-    "embedded-hal",
-    "embedded-hal-async",
+    "dep:embassy-time",
+    "dep:embedded-hal",
+    "dep:embedded-hal-async",
     "embedded-io",
     "embedded-io-async",
     "static_cell",
