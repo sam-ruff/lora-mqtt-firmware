@@ -3,9 +3,9 @@
 //! Continuously listens for incoming LoRa packets and processes commands
 //! when available, with a maximum latency defined by the RX poll interval.
 
-use crate::commands::{Command, Response};
 use crate::dispatcher::{CommandDispatcher, ResponseMessage, RESPONSE_CHANNEL};
 use crate::lora::traits::{LoraError, LoraRadio};
+use wt_protocol::{Command, Response};
 
 use super::admin::{AdminCommand, ADMIN_CHANNEL};
 use super::led::LedFlashDuration;
@@ -94,13 +94,13 @@ pub async fn lora_task<R: LoraRadio>(
 
             // Log response
             match &response {
-                crate::commands::Response::Version { major, minor, patch } => {
+                Response::Version { major, minor, patch } => {
                     crate::debug!("Version: {}.{}.{}", major, minor, patch);
                 }
-                crate::commands::Response::TxComplete => {
+                Response::TxComplete => {
                     crate::debug!("LoRa TX: Complete");
                 }
-                crate::commands::Response::Error { status, .. } => {
+                Response::Error { status, .. } => {
                     crate::debug!("LoRa TX: Failed ({:?})", status);
                 }
                 _ => {}

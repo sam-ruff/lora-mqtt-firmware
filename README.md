@@ -2,6 +2,14 @@
 
 ESP32-S3 firmware with WIO-SX1262 LoRa module using Embassy async runtime. Receives COBS-encoded binary commands over serial or BLE and supports LoRa TX/RX operations.
 
+The wire protocol (command/response codec and COBS framing) lives in the shared [`wt-protocol`](https://github.com/sam-ruff/walkie-textie-protocol) crate, vendored here as a git submodule and used by both this firmware and the phone app so the two cannot drift. Clone with submodules:
+
+```bash
+git clone --recursive <repo-url>
+# or, in an existing checkout:
+git submodule update --init --recursive
+```
+
 ## Building
 
 ### Prerequisites
@@ -310,14 +318,14 @@ All examples show the complete COBS-encoded frame including the zero delimiter.
 
 **GetVersion Command:**
 ```
-Raw:    01 01 00 00 64 0b       (version=1, cmd=0x01, len=0, crc=0x0b64)
-COBS:   03 01 01 01 03 64 0b 00
+Raw:    01 01 00 00 84 41       (version=1, cmd=0x01, len=0, crc=0x4184)
+COBS:   03 01 01 01 03 84 41 00
 ```
 
 **GetVersion Response (v0.1.0):**
 ```
-Raw:    01 01 03 00 00 01 00 15 b7    (version=1, resp=0x01, len=3, payload=[0,1,0], crc)
-COBS:   04 01 01 03 05 01 01 15 b7 00
+Raw:    01 01 03 00 00 01 00 22 20    (version=1, resp=0x01, len=3, payload=[0,1,0], crc=0x2022)
+COBS:   04 01 01 03 01 02 01 03 22 20 00
 ```
 
 **Reboot Command:**
@@ -328,14 +336,14 @@ COBS:   03 01 03 01 03 e4 2f 00
 
 **LoraTx Command ("Hello"):**
 ```
-Raw:    01 10 05 00 48 65 6c 6c 6f [crc16]
-COBS:   [COBS-encoded bytes] 00
+Raw:    01 10 05 00 48 65 6c 6c 6f e6 64    (crc=0x64e6)
+COBS:   04 01 10 05 08 48 65 6c 6c 6f e6 64 00
 ```
 
 **Error Response (InvalidCommand for cmd 0xFE):**
 ```
-Raw:    01 ff 02 00 01 fe [crc16]    (status=0x01, original_cmd=0xFE)
-COBS:   [COBS-encoded bytes] 00
+Raw:    01 ff 02 00 01 fe 87 cf    (status=0x01, original_cmd=0xFE, crc=0xcf87)
+COBS:   04 01 ff 02 05 01 fe 87 cf 00
 ```
 
 ### CRC-16 Calculation
@@ -346,7 +354,7 @@ Python example:
 ```python
 import crcmod
 crc16 = crcmod.predefined.mkCrcFun('xmodem')
-checksum = crc16(bytes([0x01, 0x01, 0x00, 0x00]))  # GetVersion: 0x0b64
+checksum = crc16(bytes([0x01, 0x01, 0x00, 0x00]))  # GetVersion: 0x4184
 ```
 
 ### COBS Encoding
@@ -356,7 +364,7 @@ COBS (Consistent Overhead Byte Stuffing) encodes data to eliminate zero bytes, u
 Python example:
 ```python
 from cobs import cobs
-raw_frame = bytes([0x01, 0x01, 0x00, 0x00, 0x64, 0x0b])
+raw_frame = bytes([0x01, 0x01, 0x00, 0x00, 0x84, 0x41])
 encoded = cobs.encode(raw_frame) + b'\x00'  # Add delimiter
 ```
 

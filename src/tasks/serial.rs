@@ -8,10 +8,9 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embedded_io_async::{Read, Write};
 
-use crate::commands::{Command, CommandParser, Response, ResponseSerialiser, ResponseStatus};
 use crate::config;
 use crate::dispatcher::{CommandEnvelope, CommandSource, ResponseMessage, RESPONSE_CHANNEL};
-use crate::protocol::framing::FrameAccumulator;
+use wt_protocol::{Command, FrameAccumulator, Response, ResponseStatus};
 
 /// Result of attempting to parse a frame
 enum ReadResult {
@@ -35,7 +34,6 @@ pub async fn serial_reader_task<R: Read>(
     command_sender: CommandSender,
 ) {
     let mut accumulator = FrameAccumulator::new();
-    let parser = CommandParser::new();
     let mut sequence_counter: u16 = 0;
 
     // Get publisher for sending parse error responses
@@ -54,7 +52,7 @@ pub async fn serial_reader_task<R: Read>(
                         let seq_id = sequence_counter;
                         sequence_counter = sequence_counter.wrapping_add(1);
 
-                        match process_frame(&parser, frame) {
+                        match process_frame(frame) {
                             Some(ReadResult::Command(cmd)) => {
                                 let envelope = CommandEnvelope {
                                     command: cmd,
@@ -87,19 +85,11 @@ pub async fn serial_reader_task<R: Read>(
     }
 }
 
-/// Process a complete COBS frame
+/// Process a complete COBS frame (delimiter included).
 fn process_frame(
-    parser: &CommandParser,
-    mut frame: heapless::Vec<u8, { config::protocol::MAX_FRAME_SIZE }>,
+    frame: heapless::Vec<u8, { config::protocol::MAX_FRAME_SIZE }>,
 ) -> Option<ReadResult> {
-    use crate::commands::serialiser::cobs_decode;
-
-    // Add back the zero delimiter that FrameAccumulator strips
-    // (corncobs::decode_buf expects it)
-    let _ = frame.push(0x00);
-
-    // Decode COBS
-    let decoded = match cobs_decode(&frame) {
+    let decoded = match wt_protocol::cobs_decode(&frame) {
         Ok(d) => d,
         Err(_) => return None,
     };
@@ -108,9 +98,10 @@ fn process_frame(
         return None;
     }
 
-    let command_id = decoded[0];
+    // Byte 1 is the command id (byte 0 is the protocol version); echoed back on error.
+    let command_id = decoded.get(1).copied().unwrap_or(0);
 
-    match parser.parse(&decoded) {
+    match wt_protocol::parse_command(&decoded) {
         Ok(cmd) => Some(ReadResult::Command(cmd)),
         Err(status) => Some(ReadResult::ParseError(status, command_id)),
     }
@@ -120,8 +111,6 @@ fn process_frame(
 ///
 /// Generic over any type implementing `embedded_io_async::Write`.
 pub async fn serial_writer_task<W: Write>(mut writer: W) {
-    let serialiser = ResponseSerialiser::new();
-
     // Subscribe to unified response channel
     let mut response_sub = RESPONSE_CHANNEL.subscriber().unwrap();
 
@@ -145,7 +134,7 @@ pub async fn serial_writer_task<W: Write>(mut writer: W) {
         };
 
         if let Some(response) = response {
-            let encoded = serialiser.serialise(&response);
+            let encoded = wt_protocol::encode_response(&response);
             let _ = writer.write_all(&encoded).await;
         }
     }

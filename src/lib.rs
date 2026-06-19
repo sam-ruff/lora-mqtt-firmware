@@ -1,8 +1,9 @@
 #![cfg_attr(not(test), no_std)]
 
-pub mod commands;
 pub mod config;
-pub mod protocol;
+
+// Wire protocol (command/response codec and COBS framing) shared with the app.
+pub use wt_protocol;
 
 // The lora module is always present so its dependency-free calibration helpers
 // can be unit-tested on the host; the hardware driver/traits are gated inside it.

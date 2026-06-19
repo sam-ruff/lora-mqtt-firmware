@@ -31,12 +31,10 @@ use esp_hal::Async;
 use static_cell::StaticCell;
 
 mod ble;
-mod commands;
 mod config;
 mod debug;
 mod dispatcher;
 mod lora;
-mod protocol;
 mod tasks;
 mod usb;
 

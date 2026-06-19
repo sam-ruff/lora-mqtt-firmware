@@ -3,9 +3,9 @@
 //! This module defines the channel architecture for multi-source command handling
 //! and the dispatcher that executes commands.
 
-use crate::commands::types::{Command, Response, ResponseStatus};
 use crate::config::protocol;
 use crate::lora::traits::{LoraError, LoraRadio};
+use wt_protocol::{Command, Response, ResponseStatus};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::pubsub::PubSubChannel;

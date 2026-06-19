@@ -1699,8 +1699,6 @@ checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 name = "walkie-textie-rust-firmware"
 version = "0.1.0"
 dependencies = [
- "corncobs",
- "crc",
  "critical-section",
  "embassy-executor",
  "embassy-futures",
@@ -1722,6 +1720,7 @@ dependencies = [
  "heapless 0.8.0",
  "static_cell",
  "trouble-host",
+ "wt-protocol",
 ]
 
 [[package]]
@@ -1800,6 +1799,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "wt-protocol"
+version = "0.1.0"
+dependencies = [
+ "corncobs",
+ "crc",
+ "heapless 0.8.0",
 ]
 
 [[package]]

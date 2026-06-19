@@ -7,10 +7,9 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use trouble_host::prelude::*;
 
 use crate::ble::service::{NordicUartService, NUS_MAX_PACKET_SIZE};
-use crate::commands::{CommandParser, ResponseSerialiser, ResponseStatus};
 use crate::config;
 use crate::dispatcher::{CommandEnvelope, CommandSource, ResponseMessage, COMMAND_CHANNEL, RESPONSE_CHANNEL};
-use crate::protocol::framing::FrameAccumulator;
+use wt_protocol::{Command, FrameAccumulator, Response, ResponseStatus};
 
 /// Device name prefix for BLE advertising
 const DEVICE_NAME_PREFIX: &str = "WalkieTextie-";
@@ -106,8 +105,6 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
         };
 
         // Shared state for command processing
-        let parser = CommandParser::new();
-        let serialiser = ResponseSerialiser::new();
         let command_sender = COMMAND_CHANNEL.sender();
 
         loop {
@@ -178,7 +175,7 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                                                     sequence_id = sequence_id.wrapping_add(1);
 
                                                     // Decode COBS and parse command
-                                                    match decode_and_parse(&parser, frame) {
+                                                    match decode_and_parse(frame) {
                                                         Ok(command) => {
                                                             let envelope = CommandEnvelope {
                                                                 command,
@@ -189,7 +186,7 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                                                         }
                                                         Err(response) => {
                                                             // Send error response directly via notification
-                                                            let encoded = serialiser.serialise(&response);
+                                                            let encoded = wt_protocol::encode_response(&response);
                                                             let mut tx_buf = [0u8; NUS_MAX_PACKET_SIZE];
                                                             let len = encoded.len().min(tx_buf.len());
                                                             tx_buf[..len].copy_from_slice(&encoded[..len]);
@@ -231,7 +228,7 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                         };
 
                         if let Some(response) = response {
-                            let encoded = serialiser.serialise(&response);
+                            let encoded = wt_protocol::encode_response(&response);
                             let mut tx_buf = [0u8; NUS_MAX_PACKET_SIZE];
                             let len = encoded.len().min(tx_buf.len());
                             tx_buf[..len].copy_from_slice(&encoded[..len]);
@@ -247,35 +244,21 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
     embassy_futures::select::select(runner_task, peripheral_task).await;
 }
 
-/// Decode COBS frame and parse command
+/// Decode a COBS frame (delimiter included) and parse it into a command.
 fn decode_and_parse(
-    parser: &CommandParser,
-    mut frame: heapless::Vec<u8, { config::protocol::MAX_FRAME_SIZE }>,
-) -> Result<crate::commands::Command, crate::commands::Response> {
-    use crate::commands::serialiser::cobs_decode;
-
-    // Add back the zero delimiter that FrameAccumulator strips
-    let _ = frame.push(0x00);
-
-    // Decode COBS
-    let decoded = match cobs_decode(&frame) {
+    frame: heapless::Vec<u8, { config::protocol::MAX_FRAME_SIZE }>,
+) -> Result<Command, Response> {
+    let decoded = match wt_protocol::cobs_decode(&frame) {
         Ok(d) => d,
-        Err(_) => return Err(crate::commands::Response::error_raw(
-            ResponseStatus::CrcError,  // Use CrcError for decode failures
-            0x00,
-        )),
+        Err(_) => return Err(Response::error_raw(ResponseStatus::CrcError, 0x00)),
     };
 
     if decoded.is_empty() {
-        return Err(crate::commands::Response::error_raw(
-            ResponseStatus::InvalidLength,
-            0x00,
-        ));
+        return Err(Response::error_raw(ResponseStatus::InvalidLength, 0x00));
     }
 
-    let command_id = decoded[0];
+    // Byte 1 is the command id (byte 0 is the protocol version); echoed back on error.
+    let command_id = decoded.get(1).copied().unwrap_or(0);
 
-    parser.parse(&decoded).map_err(|status| {
-        crate::commands::Response::error_raw(status, command_id)
-    })
+    wt_protocol::parse_command(&decoded).map_err(|status| Response::error_raw(status, command_id))
 }

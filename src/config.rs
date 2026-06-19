@@ -21,19 +21,11 @@ pub mod lora_defaults {
 
 /// Protocol constants
 pub mod protocol {
-    /// Frame delimiter for COBS encoding
-    pub const FRAME_DELIMITER: u8 = 0x00;
+    /// Wire size limits are owned by the shared `wt-protocol` crate so the
+    /// firmware and app cannot drift.
+    pub use wt_protocol::{MAX_FRAME_SIZE, MAX_LORA_PAYLOAD};
 
-    /// Maximum frame size
-    pub const MAX_FRAME_SIZE: usize = 512;
-
-    /// Maximum payload size for LoRa
-    pub const MAX_LORA_PAYLOAD: usize = 256;
-
-    /// Protocol version (increment when message format changes)
-    pub const PROTOCOL_VERSION: u8 = 1;
-
-    /// Firmware version
+    /// Firmware version, reported by GetVersion.
     pub const VERSION_MAJOR: u8 = 0;
     pub const VERSION_MINOR: u8 = 1;
     pub const VERSION_PATCH: u8 = 0;
