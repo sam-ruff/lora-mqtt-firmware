@@ -12,6 +12,10 @@ name = "lora-tests"
 path = "src/lora_tests.rs"
 
 [[bin]]
+name = "ble-tests"
+path = "src/ble_tests.rs"
+
+[[bin]]
 name = "ble-serial-tests"
 path = "src/ble_serial_tests.rs"
 
@@ -20,8 +24,9 @@ name = "ble-ble-tests"
 path = "src/ble_ble_tests.rs"
 
 [dependencies]
-# Serial port communication
-serialport = "4.5"
+# Serial port communication (usbportinfo-interface exposes the USB interface
+# number so we can tell the data CDC from the debug CDC deterministically)
+serialport = { version = "4.5", features = ["usbportinfo-interface"] }
 
 # COBS encoding (same as firmware)
 corncobs = "0.1"

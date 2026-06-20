@@ -109,6 +109,12 @@ echo ""
 echo "=========================================="
 if [ ${#FAILED[@]} -eq 0 ]; then
     echo "All devices flashed successfully!"
+    echo ""
+    echo "IMPORTANT: power-cycle each board now (unplug and replug, do NOT hold"
+    echo "BOOT). These boards use the ESP32-S3 native USB-Serial-JTAG, which cannot"
+    echo "be reset into the app from the host, so they stay in ROM download mode"
+    echo "until power-cycled. A running board shows up as 'Walkie-Textie Dual CDC'"
+    echo "and advertises over Bluetooth as 'WalkieTextie-XXXXXX'."
 else
     echo "Flashing failed for: ${FAILED[*]}"
     echo ""

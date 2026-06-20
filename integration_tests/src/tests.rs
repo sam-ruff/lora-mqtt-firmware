@@ -55,13 +55,11 @@ where
 
 /// Run all tests and return results.
 pub fn run_all_tests(device: &mut DeviceClient) -> Vec<TestResult> {
-    let mut results = Vec::new();
-
-    results.push(run_test("GetVersion returns version bytes", device, test_get_version));
-    results.push(run_test("Invalid command returns error", device, test_invalid_command));
-    results.push(run_test("Multiple GetVersion calls succeed", device, test_multiple_get_version));
-
-    results
+    vec![
+        run_test("GetVersion returns version bytes", device, test_get_version),
+        run_test("Invalid command returns error", device, test_invalid_command),
+        run_test("Multiple GetVersion calls succeed", device, test_multiple_get_version),
+    ]
 }
 
 /// Print test results summary.
@@ -137,7 +135,7 @@ fn test_invalid_command(device: &mut DeviceClient) -> TestResult {
                 );
             }
             // Error payload: [status, original_cmd_id]
-            if response.payload.len() >= 1 {
+            if !response.payload.is_empty() {
                 let status = response.payload[0];
                 if status == ResponseStatus::InvalidCommand as u8 {
                     TestResult::pass("test")

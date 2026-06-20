@@ -6,50 +6,54 @@ use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use serialport::SerialPort;
+use serialport::{SerialPort, SerialPortType};
 
 use crate::protocol::{build_command, cobs_decode, cobs_encode, build_command_payload, parse_response, CommandId, Response, ResponseId};
 
-/// Find available data ports by scanning ttyACM devices and testing with GetVersion.
-/// Returns a list of port names that respond to GetVersion (these are the data ports).
+/// USB vendor/product id of the Walkie-Textie firmware (dual CDC-ACM device).
+const USB_VID: u16 = 0x303A;
+const USB_PID: u16 = 0x1001;
+
+/// Find the live data port of every connected board.
 ///
-/// Note: With dual CDC-ACM devices, even-numbered ports (ACM0, ACM2, etc.) are data ports
-/// and odd-numbered ports (ACM1, ACM3, etc.) are debug ports. We only probe even ports
-/// to avoid hanging on debug ports that may not handle reads properly.
+/// The firmware exposes two CDC-ACM functions in a fixed order: the data port is
+/// the first function (USB interface 0) and the debug/log port is the second
+/// (interface 2). The kernel numbers `/dev/ttyACMN` in enumeration order, not by
+/// interface role, so the data port is identified by its USB interface number,
+/// never by the port number being even or odd (which is not deterministic - two
+/// boards' data ports can both enumerate before either debug port).
 pub fn find_data_ports() -> Result<Vec<String>> {
     let ports = serialport::available_ports()?;
 
     let mut data_ports = Vec::new();
-
     for port_info in ports {
-        // Filter to ttyACM devices (CDC-ACM)
-        if !port_info.port_name.contains("ttyACM") {
+        let SerialPortType::UsbPort(usb) = &port_info.port_type else {
+            continue;
+        };
+        if usb.vid != USB_VID || usb.pid != USB_PID {
+            continue;
+        }
+        // Interface 0 is the data CDC; interface 2 is the debug/log CDC.
+        if usb.interface != Some(0) {
             continue;
         }
 
-        // Only probe even-numbered ports (data ports in dual CDC setup)
-        // Odd ports are debug ports and may hang on reads
-        if let Some(num_str) = port_info.port_name.strip_prefix("/dev/ttyACM") {
-            if let Ok(num) = num_str.parse::<u32>() {
-                if num % 2 != 0 {
-                    continue; // Skip odd-numbered (debug) ports
-                }
-            }
-        }
-        println!("Checking port: {:?}", port_info.port_name);
-
-        // Try to connect and send GetVersion
-        if let Ok(mut client) = DeviceClient::new(&port_info.port_name, 115200) {
-            // Set short timeout for probing
-            client.set_timeout(Duration::from_millis(500));
-            if let Ok(response) = client.send_command(CommandId::GetVersion, &[]) {
-                if response.resp_id == ResponseId::Version {
-                    data_ports.push(port_info.port_name.clone());
-                }
-            }
+        // Confirm the firmware is actually responding before claiming the port.
+        let responds = DeviceClient::new(&port_info.port_name, 115200)
+            .map(|mut client| client.wait_ready(Duration::from_secs(2)).is_ok())
+            .unwrap_or(false);
+        if responds {
+            data_ports.push(port_info.port_name.clone());
+        } else {
+            eprintln!(
+                "  warning: {} ({}) is a data port but did not respond",
+                port_info.port_name,
+                usb.serial_number.as_deref().unwrap_or("unknown")
+            );
         }
     }
 
+    data_ports.sort();
     Ok(data_ports)
 }
 
@@ -110,14 +114,57 @@ pub struct DeviceClient {
 impl DeviceClient {
     /// Create a new device client.
     pub fn new(port_name: &str, baud_rate: u32) -> Result<Self> {
+        // The firmware can take its full RX poll interval (~500ms) plus the LoRa
+        // time-on-air to answer, so keep a generous default response window.
+        let timeout = Duration::from_secs(3);
         let port = serialport::new(port_name, baud_rate)
-            .timeout(Duration::from_secs(2))
+            .timeout(timeout)
             .open()?;
 
-        Ok(Self {
-            port,
-            timeout: Duration::from_secs(2),
-        })
+        Ok(Self { port, timeout })
+    }
+
+    /// Wait until the firmware answers GetVersion, or the timeout elapses.
+    ///
+    /// Drains any stale bytes, then retries with a short per-attempt timeout so
+    /// the occasional dropped first command after a fresh CDC connection does not
+    /// fail the caller. Doubles as a warm-up for the link.
+    pub fn wait_ready(&mut self, timeout: Duration) -> Result<()> {
+        self.get_version(timeout).map(|_| ())
+    }
+
+    /// Retry GetVersion until it answers, returning (major, minor, patch).
+    ///
+    /// Tolerant of the firmware's command latency (it polls LoRa RX for up to
+    /// ~500ms between command checks) and of the occasional dropped command on a
+    /// fresh CDC connection. Each attempt clears stale input first, so a retry
+    /// never leaves a stray response behind.
+    pub fn get_version(&mut self, timeout: Duration) -> Result<(u8, u8, u8)> {
+        // Absorb any late reply left over from a previous session: on reconnect
+        // the firmware can flush a response it was blocked on once DTR re-asserts.
+        let _ = self.drain_buffer();
+
+        let previous = self.timeout;
+        let attempt = timeout.min(Duration::from_millis(1500));
+        self.set_timeout(attempt);
+
+        let start = Instant::now();
+        let mut last_err = anyhow::anyhow!("device did not respond to GetVersion");
+        loop {
+            match self.send_command(CommandId::GetVersion, &[]) {
+                Ok(resp) if resp.resp_id == ResponseId::Version && resp.payload.len() >= 3 => {
+                    let version = (resp.payload[0], resp.payload[1], resp.payload[2]);
+                    self.set_timeout(previous);
+                    return Ok(version);
+                }
+                Ok(resp) => last_err = anyhow::anyhow!("unexpected response {:?}", resp.resp_id),
+                Err(e) => last_err = e,
+            }
+            if start.elapsed() >= timeout {
+                self.set_timeout(previous);
+                return Err(last_err);
+            }
+        }
     }
 
     /// Set the response timeout.
@@ -157,21 +204,42 @@ impl DeviceClient {
         Ok(())
     }
 
-    /// Send a command and wait for response.
+    /// Send a command and wait for its reply.
     pub fn send_command(&mut self, cmd_id: CommandId, payload: &[u8]) -> Result<Response> {
-        // Build and send command
         let frame = build_command(cmd_id, payload);
         self.port.write_all(&frame)?;
         self.port.flush()?;
+        self.read_command_response_resync()
+    }
 
-        // Read response until zero delimiter
-        let response_data = self.read_frame()?;
+    /// Read the command reply, draining the buffer on failure so a timed-out or
+    /// corrupt exchange cannot leave a partial frame that desyncs the next one.
+    fn read_command_response_resync(&mut self) -> Result<Response> {
+        let result = self.read_command_response();
+        if result.is_err() {
+            let _ = self.drain_buffer();
+        }
+        result
+    }
 
-        // Decode and parse (add zero delimiter back - corncobs expects it)
-        let mut frame_with_delimiter = response_data;
-        frame_with_delimiter.push(0x00);
-        let decoded = cobs_decode(&frame_with_delimiter)?;
-        parse_response(&decoded)
+    /// Read frames until the command reply arrives, skipping unsolicited packets.
+    ///
+    /// The device shares one stream for command replies and unsolicited LoRa
+    /// RxPackets, and the slow radio can deliver a packet from an earlier
+    /// exchange late. Reading whole frames (never clearing mid-frame, which would
+    /// split one) and skipping RxPackets keeps the strict request/response model
+    /// in sync. Command replies are Version / TxComplete / Error, never RxPacket.
+    fn read_command_response(&mut self) -> Result<Response> {
+        loop {
+            let mut frame = self.read_frame()?;
+            frame.push(0x00); // corncobs expects the delimiter
+            let decoded = cobs_decode(&frame)?;
+            let response = parse_response(&decoded)?;
+            if response.resp_id == ResponseId::RxPacket {
+                continue; // unsolicited - not the reply to our command
+            }
+            return Ok(response);
+        }
     }
 
     /// Read bytes until zero delimiter.
@@ -214,12 +282,7 @@ impl DeviceClient {
         self.port.write_all(&encoded)?;
         self.port.flush()?;
 
-        let response_data = self.read_frame()?;
-        // Add zero delimiter back - corncobs expects it
-        let mut frame_with_delimiter = response_data;
-        frame_with_delimiter.push(0x00);
-        let decoded = cobs_decode(&frame_with_delimiter)?;
-        parse_response(&decoded)
+        self.read_command_response_resync()
     }
 
     /// Send LoRa TX command with data.
@@ -264,6 +327,33 @@ impl DeviceClient {
             }
         }
         anyhow::bail!("Timeout waiting for RxPacket")
+    }
+
+    /// Wait for an RxPacket whose data payload equals `expected`.
+    ///
+    /// The radio is slow (SF11), so a packet from an earlier exchange can be
+    /// delivered late and land in the next read; skipping non-matching frames
+    /// keeps the strict per-message tests in sync without masking real loss (a
+    /// missing packet still times out). The trailing 3 bytes are rssi+snr.
+    pub fn wait_for_rx_packet_matching(
+        &mut self,
+        expected: &[u8],
+        timeout: Duration,
+    ) -> Result<Response> {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            let Some(response) = self.try_read_response(Duration::from_millis(200))? else {
+                continue;
+            };
+            if response.resp_id != ResponseId::RxPacket || response.payload.len() < 3 {
+                continue;
+            }
+            if &response.payload[..response.payload.len() - 3] == expected {
+                return Ok(response);
+            }
+            // Stale or unexpected packet - keep waiting for the one we want.
+        }
+        anyhow::bail!("Timeout waiting for RxPacket matching {:?}", expected)
     }
 
     /// Clone the underlying port for use in a separate thread.

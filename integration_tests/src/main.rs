@@ -39,9 +39,9 @@ fn main() -> anyhow::Result<()> {
     println!("Connecting to device...");
     let mut device = DeviceClient::new(&port, args.baud)?;
 
-    // Wait for bootloader output to finish, then clear buffer
-    std::thread::sleep(std::time::Duration::from_secs(1));
-    device.clear_buffer()?;
+    // Wait for the firmware to settle and confirm it responds (also warms up the
+    // link, absorbing the occasional dropped first command on a fresh connection).
+    device.wait_ready(std::time::Duration::from_secs(3))?;
     println!("{}", "Connected!".green());
 
     println!("\nRunning tests...\n");

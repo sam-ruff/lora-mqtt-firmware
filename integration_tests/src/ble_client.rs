@@ -15,7 +15,10 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use crate::protocol::{build_command, cobs_decode, parse_response, CommandId, Response};
+use crate::protocol::{
+    build_command, build_command_payload, cobs_decode, cobs_encode, parse_response, CommandId,
+    Response, ResponseId,
+};
 
 /// Nordic UART Service UUIDs
 const NUS_SERVICE_UUID: Uuid = Uuid::from_u128(0x6e400001_b5a3_f393_e0a9_e50e24dcca9e);
@@ -114,7 +117,9 @@ impl BleClient {
             for peripheral in peripherals {
                 if let Some(props) = peripheral.properties().await? {
                     if let Some(local_name) = props.local_name {
-                        if local_name == name {
+                        // Prefix match: devices advertise as "WalkieTextie-XXXXXX",
+                        // so a default name of "WalkieTextie" finds any of them.
+                        if local_name.starts_with(name) {
                             return Ok(peripheral);
                         }
                     }
@@ -150,59 +155,110 @@ impl BleClient {
         self.wait_for_response(response_timeout).await
     }
 
-    /// Wait for a notification response with timeout.
-    pub async fn wait_for_response(&self, response_timeout: Duration) -> Result<Response> {
-        let result = timeout(response_timeout, async {
-            loop {
-                // Check for complete frame in buffer
-                let mut buf = self.notification_buffer.lock().await;
+    /// Send a command by raw id (for testing invalid commands) and wait for the
+    /// response.
+    pub async fn send_raw_command(
+        &self,
+        cmd_id: u8,
+        payload: &[u8],
+        response_timeout: Duration,
+    ) -> Result<Response> {
+        {
+            let mut buf = self.notification_buffer.lock().await;
+            buf.clear();
+        }
 
-                // Look for zero delimiter
-                if let Some(pos) = buf.iter().position(|&b| b == 0x00) {
-                    if pos > 0 {
-                        // Extract frame (without delimiter)
-                        let frame_data: Vec<u8> = buf.drain(..=pos).collect();
-                        drop(buf); // Release lock before processing
+        let frame = cobs_encode(&build_command_payload(cmd_id, payload));
+        self.peripheral
+            .write(&self.rx_char, &frame, WriteType::WithoutResponse)
+            .await?;
 
-                        // Decode COBS (with delimiter)
-                        let decoded = cobs_decode(&frame_data)?;
-                        return parse_response(&decoded);
-                    } else {
-                        // Empty frame, skip the delimiter
-                        buf.remove(0);
-                    }
-                } else {
+        self.wait_for_response(response_timeout).await
+    }
+
+    /// Read the next complete notification frame (any response type).
+    ///
+    /// Awaits until a whole COBS frame is available; never returns a partial.
+    async fn read_next_response(&self) -> Result<Response> {
+        loop {
+            let mut buf = self.notification_buffer.lock().await;
+            if let Some(pos) = buf.iter().position(|&b| b == 0x00) {
+                if pos > 0 {
+                    let frame_data: Vec<u8> = buf.drain(..=pos).collect();
                     drop(buf);
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    let decoded = cobs_decode(&frame_data)?;
+                    return parse_response(&decoded);
+                } else {
+                    buf.remove(0); // empty frame, skip delimiter
+                }
+            } else {
+                drop(buf);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+    }
+
+    /// Wait for a command reply, skipping unsolicited RxPackets.
+    ///
+    /// The device shares one notify stream for command replies and unsolicited
+    /// LoRa RxPackets, and the slow radio can deliver a packet late. Command
+    /// replies are Version / TxComplete / Error, never RxPacket.
+    pub async fn wait_for_response(&self, response_timeout: Duration) -> Result<Response> {
+        timeout(response_timeout, async {
+            loop {
+                let response = self.read_next_response().await?;
+                if response.resp_id != ResponseId::RxPacket {
+                    return Ok::<_, anyhow::Error>(response);
                 }
             }
         })
-        .await;
+        .await
+        .map_err(|_| anyhow!("Timeout waiting for BLE response"))?
+    }
 
-        match result {
-            Ok(response) => response,
-            Err(_) => Err(anyhow!("Timeout waiting for BLE response")),
+    /// Try to read a command reply (non-blocking check).
+    pub async fn try_read_response(&self, timeout_duration: Duration) -> Result<Option<Response>> {
+        match self.wait_for_response(timeout_duration).await {
+            Ok(response) => Ok(Some(response)),
+            Err(e) if e.to_string().contains("Timeout") => Ok(None),
+            Err(e) => Err(e),
         }
     }
 
-    /// Try to read an unsolicited response (non-blocking check).
-    pub async fn try_read_response(&self, timeout_duration: Duration) -> Result<Option<Response>> {
-        match timeout(timeout_duration, self.wait_for_response(timeout_duration)).await {
-            Ok(Ok(response)) => Ok(Some(response)),
-            Ok(Err(e)) => {
-                if e.to_string().contains("Timeout") {
-                    Ok(None)
-                } else {
-                    Err(e)
+    /// Wait for any unsolicited RxPacket response.
+    pub async fn wait_for_rx_packet(&self, timeout_duration: Duration) -> Result<Response> {
+        timeout(timeout_duration, async {
+            loop {
+                let response = self.read_next_response().await?;
+                if response.resp_id == ResponseId::RxPacket {
+                    return Ok::<_, anyhow::Error>(response);
                 }
             }
-            Err(_) => Ok(None), // Timeout
-        }
+        })
+        .await
+        .map_err(|_| anyhow!("Timeout waiting for BLE RxPacket"))?
     }
 
-    /// Wait for an unsolicited RxPacket response.
-    pub async fn wait_for_rx_packet(&self, timeout_duration: Duration) -> Result<Response> {
-        self.wait_for_response(timeout_duration).await
+    /// Wait for an RxPacket whose data payload equals `expected`, skipping stale
+    /// or late packets from earlier exchanges. Trailing 3 bytes are rssi+snr.
+    pub async fn wait_for_rx_packet_matching(
+        &self,
+        expected: &[u8],
+        timeout_duration: Duration,
+    ) -> Result<Response> {
+        timeout(timeout_duration, async {
+            loop {
+                let response = self.read_next_response().await?;
+                if response.resp_id == ResponseId::RxPacket
+                    && response.payload.len() >= 3
+                    && &response.payload[..response.payload.len() - 3] == expected
+                {
+                    return Ok::<_, anyhow::Error>(response);
+                }
+            }
+        })
+        .await
+        .map_err(|_| anyhow!("Timeout waiting for BLE RxPacket matching {:?}", expected))?
     }
 
     /// Send LoRa TX command with data.
