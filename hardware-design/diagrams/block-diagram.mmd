@@ -1,0 +1,52 @@
+%% Functional block diagram - MESHTASTIC NODE
+%% Nets are inferred from the BOM and the standard ESP32-S3 + SX1262 topology,
+%% not extracted from a schematic.
+flowchart LR
+    USB["USB-C (J1)<br/>GT-USB-8016B<br/>5V + USB 2.0"]
+    ESD["ESD (U1)<br/>USBLC6-2P6"]
+    LDO["LDO (U2)<br/>TLV75901<br/>5V to 3V3"]
+
+    subgraph MCUBLK["MCU"]
+        MCU["ESP32-S3R8 (U3)<br/>USB + WiFi/BLE"]
+        XTAL["40MHz crystal (Y1)<br/>+ 22pF (C20/C21)"]
+        FLASH["Flash (U4)<br/>GD25Q64 64Mb"]
+    end
+
+    subgraph RFBLK["Radio / antennas"]
+        LORA["WIO-SX1262 (U5)<br/>LoRa module"]
+        LORAANT["module IPEX<br/>LoRa antenna"]
+        MATCH["BLE match<br/>L2 / C15 / L1"]
+        ANT["U.FL (AE1)<br/>Bluetooth antenna"]
+    end
+
+    subgraph UIBLK["User IO"]
+        BTN["Buttons<br/>SW1 / SW2"]
+        LED["LED (D1) + R6"]
+    end
+
+    USB -->|5V| ESD
+    USB -->|5V| LDO
+    ESD -->|"USB D+/D-"| MCU
+    LDO -->|3V3| MCU
+    LDO -->|3V3| FLASH
+    LDO -->|3V3| LORA
+    XTAL --- MCU
+    MCU <-->|SPI| FLASH
+    MCU <-->|"SPI / DIO"| LORA
+    LORA -.->|"onboard IPEX"| LORAANT
+    MCU -->|"2.4G RF"| MATCH
+    MATCH -->|RF| ANT
+    BTN -->|GPIO| MCU
+    MCU -->|GPIO| LED
+
+    classDef pwr fill:#ff9896,stroke:#d62728,color:#000;
+    classDef mcu fill:#d62728,stroke:#7a1313,color:#fff;
+    classDef rf fill:#9467bd,stroke:#5b3a86,color:#fff;
+    classDef io fill:#ff7f0e,stroke:#b35900,color:#fff;
+    classDef misc fill:#7f7f7f,stroke:#4d4d4d,color:#fff;
+
+    class USB,LDO pwr;
+    class ESD misc;
+    class MCU,XTAL,FLASH mcu;
+    class LORA,LORAANT,MATCH,ANT rf;
+    class BTN,LED io;

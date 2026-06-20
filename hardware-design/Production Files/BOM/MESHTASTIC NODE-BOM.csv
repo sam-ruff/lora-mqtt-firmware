@@ -1,0 +1,29 @@
+Comment,Designator,Footprint,Qty,LCSC Part #,Notes,Link
+Antenna_Loop,AE1,Connector_Coaxial:U.FL_Molex_MCRF_73412-0110_Vertical,1,C88374,,
+10uF,"C1,C2",Capacitor_SMD:C_0603_1608Metric,2,C96446,,
+100nF,"C3,C5,C7,C8,C9,C10,C13,C14,C19",Capacitor_SMD:C_0603_1608Metric,9,C14663,,
+2.2uF,"C4,C11,C12",Capacitor_SMD:C_0603_1608Metric,3,C23630,,
+10nF,C6,Capacitor_SMD:C_0603_1608Metric,1,C57112,,
+1pF,C15,Capacitor_SMD:C_0603_1608Metric,1,C37117,,
+1uF,C18,Capacitor_SMD:C_0603_1608Metric,1,C15849,,
+22pF,"C20,C21",Capacitor_SMD:C_0603_1608Metric,2,C1653,,
+Blue,D1,LED_SMD:LED_0603_1608Metric,1,C434421,,
+GT-USB-8016B,J1,PCB Footprints:GT-USB-8016B,1,,,
+2nH,L1,Inductor_SMD:L_0603_1608Metric,1,C370234,,
+3.3nH,L2,Inductor_SMD:L_0603_1608Metric,1,C1029,,
+5.1K,R1,Resistor_SMD:R_0603_1608Metric,1,C23186,,
+100K,R2,Resistor_SMD:R_0603_1608Metric,1,C25803 ,,
+20K,R3,Resistor_SMD:R_0603_1608Metric,1,C25765,,
+10K,"R4,R5,R7",Resistor_SMD:R_0603_1608Metric,3,C25804,,
+1.5K,R6,Resistor_SMD:R_0603_1608Metric,1,C22843,,
+B3U-1000P,"SW1,SW2",Button_Switch_SMD:SW_SPST_B3U-1000P,2,C231329,,
+USBLC6-2P6,U1,Package_TO_SOT_SMD:SOT-563,1,C2827693,,
+TLV75901PDRVR,U2,Package_SON:WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm,1,C544759,,
+ESP32-S3R8,U3,Package_DFN_QFN:QFN-56-1EP_7x7mm_P0.4mm_EP4x4mm,1,C2913194,,
+GD25Q64ESIG,U4,Package_SO:SOIC-8_5.3x5.3mm_P1.27mm,1,C2685734,,
+WIO-SX1262,U5,SMD,1,See Notes:,"This would need to be sourced from a different supplier. 
+Mouser No:
+713-114993390
+Mfr. No:
+114993390  https://www.mouser.co.uk/ProductDetail/Seeed-Studio/114993390?qs=NeOn4crkEuu9JWV37oJsXg%3D%3D Cheaper Options: https://www.aliexpress.com/item/1005008421899332.html    ",
+40MHz,Y1,Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm,1,C9010,,

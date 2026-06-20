@@ -1,0 +1,45 @@
+%% Component overview by subsystem - MESHTASTIC NODE
+%% Passive groupings are approximate (inferred from the BOM; no netlist present).
+flowchart TD
+    BOARD["MESHTASTIC NODE<br/>4-layer, 30.1 x 40.1 mm<br/>39 placed parts"]
+
+    subgraph POWER["Power"]
+        J1["USB-C (J1)<br/>GT-USB-8016B"]
+        U1["ESD (U1)<br/>USBLC6-2P6"]
+        U2["LDO (U2)<br/>TLV75901"]
+        PWRC["Bulk caps<br/>C1/C2 10uF, C18 1uF"]
+        PWRR["LDO set<br/>R2 100K, R3 20K"]
+    end
+
+    subgraph CORE["MCU and memory"]
+        U3["ESP32-S3R8 (U3)"]
+        Y1["40MHz crystal (Y1)<br/>+ C20/C21 22pF"]
+        U4["Flash (U4)<br/>GD25Q64 64Mb"]
+    end
+
+    subgraph RADIO["Radio"]
+        U5["WIO-SX1262 (U5)"]
+        L1L2["RF inductors<br/>L1 2nH, L2 3.3nH"]
+        C15["RF cap C15 1pF"]
+        AE1["U.FL (AE1)"]
+    end
+
+    subgraph UI["User IO"]
+        SW["Buttons<br/>SW1 / SW2"]
+        D1["Blue LED (D1)<br/>+ R6 1.5K"]
+    end
+
+    subgraph SHARED["Decoupling and pulls (approx.)"]
+        DEC["100nF x9<br/>C3,C5,C7,C8,C9,C10,C13,C14,C19"]
+        DEC2["2.2uF x3 (C4/C11/C12)<br/>10nF (C6)"]
+        PULL["Pull / sense R<br/>R1 5.1K, R4/R5/R7 10K"]
+    end
+
+    BOARD --> POWER
+    BOARD --> CORE
+    BOARD --> RADIO
+    BOARD --> UI
+    BOARD --> SHARED
+
+    classDef hdr fill:#114b1f,stroke:#0a2e13,color:#fff;
+    class BOARD hdr;
