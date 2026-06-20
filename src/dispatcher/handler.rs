@@ -8,7 +8,7 @@ use crate::lora::traits::{LoraError, LoraRadio};
 use wt_protocol::{Command, Response, ResponseStatus};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_sync::pubsub::PubSubChannel;
+use embassy_sync::pubsub::{ImmediatePublisher, PubSubChannel};
 
 /// Channel capacity for incoming commands
 const COMMAND_CHANNEL_SIZE: usize = 8;
@@ -71,6 +71,10 @@ pub static COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, CommandEnvelope, CO
 /// Parameters: CAP=8 messages, SUBS=2 subscribers (serial, BLE), PUBS=1 publisher (lora_task)
 pub static RESPONSE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ResponseMessage, 8, 2, 1> =
     PubSubChannel::new();
+
+/// Immediate publisher for `RESPONSE_CHANNEL` (the LoRa task broadcasts here).
+pub type ResponsePublisher =
+    ImmediatePublisher<'static, CriticalSectionRawMutex, ResponseMessage, 8, 2, 1>;
 
 /// Command dispatcher
 ///
