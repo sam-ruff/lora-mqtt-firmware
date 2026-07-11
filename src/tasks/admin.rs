@@ -31,18 +31,13 @@ fn reboot() -> ! {
 /// This task listens for admin commands on the ADMIN_CHANNEL and executes them.
 #[cfg(feature = "embedded")]
 pub async fn admin_task(receiver: AdminReceiver) {
-    loop {
-        let cmd = receiver.receive().await;
-
-        match cmd {
-            AdminCommand::Reboot => {
-                crate::debug!("Rebooting...");
-                // Allow the debug message to send
-                Timer::after(Duration::from_millis(500)).await;
-                reboot();
-            }
-        }
-    }
+    // The only admin command reboots and never returns, so a single receive
+    // is all this task ever does.
+    let AdminCommand::Reboot = receiver.receive().await;
+    crate::debug!("Rebooting...");
+    // Allow the debug message to send
+    Timer::after(Duration::from_millis(500)).await;
+    reboot();
 }
 
 /// Admin task stub for non-embedded builds (tests)
