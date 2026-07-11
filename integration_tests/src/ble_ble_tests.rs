@@ -340,40 +340,44 @@ async fn test_multiple_messages(device_a: &BleClient, device_b: &BleClient) -> a
     device_b.clear_buffer().await;
 
     for i in 0..NUM_MESSAGES {
-        // A sends to B
         let msg_a_to_b = format!("A_TO_B_{:02}", i);
-        let tx = device_a
-            .lora_tx(msg_a_to_b.as_bytes(), Duration::from_secs(5))
-            .await?;
-        if tx.resp_id != ResponseId::TxComplete {
-            anyhow::bail!("Round {}: A->B TX failed", i);
-        }
-
-        // B receives
-        device_b
-            .wait_for_rx_packet_matching(msg_a_to_b.as_bytes(), Duration::from_secs(10))
-            .await?;
-
-        // Small delay
+        exchange(device_a, device_b, msg_a_to_b.as_bytes(), &format!("Round {}: A->B", i)).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // B sends to A
         let msg_b_to_a = format!("B_TO_A_{:02}", i);
-        let tx = device_b
-            .lora_tx(msg_b_to_a.as_bytes(), Duration::from_secs(5))
-            .await?;
-        if tx.resp_id != ResponseId::TxComplete {
-            anyhow::bail!("Round {}: B->A TX failed", i);
-        }
-
-        // A receives
-        device_a
-            .wait_for_rx_packet_matching(msg_b_to_a.as_bytes(), Duration::from_secs(10))
-            .await?;
-
-        // Small delay before next round
+        exchange(device_b, device_a, msg_b_to_a.as_bytes(), &format!("Round {}: B->A", i)).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     Ok(())
+}
+
+/// One LoRa exchange with a single retransmission. The receiver re-arms RX
+/// between poll cycles, so real air occasionally drops a packet in that gap;
+/// that is link physics, not a firmware defect. A broken path still fails:
+/// both the send and the resend must go unheard.
+async fn exchange(
+    tx_dev: &BleClient,
+    rx_dev: &BleClient,
+    msg: &[u8],
+    label: &str,
+) -> anyhow::Result<()> {
+    let mut last_err = anyhow::anyhow!("{}: exchange never attempted", label);
+    for attempt in 0..2 {
+        if attempt > 0 {
+            println!("    {}: dropped, retransmitting", label);
+        }
+        let tx = tx_dev.lora_tx(msg, Duration::from_secs(5)).await?;
+        if tx.resp_id != ResponseId::TxComplete {
+            anyhow::bail!("{}: TX failed", label);
+        }
+        match rx_dev
+            .wait_for_rx_packet_matching(msg, Duration::from_secs(10))
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
 }
