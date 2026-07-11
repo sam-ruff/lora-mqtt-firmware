@@ -26,15 +26,16 @@ jobs:
           components: clippy
 
       # The driver-against-mock-SPI and protocol tests live behind host-test;
-      # without the feature only the calibration tests run.
+      # without the feature only the calibration tests run. +stable overrides
+      # rust-toolchain.toml, which pins the esp toolchain the runner lacks.
       - name: Firmware host unit tests
-        run: cargo test --target x86_64-unknown-linux-gnu --features host-test
+        run: cargo +stable test --target x86_64-unknown-linux-gnu --features host-test
 
       - name: Shared protocol tests
-        run: cargo test --manifest-path vendor/wt-protocol/Cargo.toml --target x86_64-unknown-linux-gnu
+        run: cargo +stable test --manifest-path vendor/wt-protocol/Cargo.toml --target x86_64-unknown-linux-gnu
 
       - name: Clippy (host)
-        run: cargo clippy --target x86_64-unknown-linux-gnu --features host-test --all-targets -- -D warnings
+        run: cargo +stable clippy --target x86_64-unknown-linux-gnu --features host-test --all-targets -- -D warnings
 
   build:
     name: Build Firmware
