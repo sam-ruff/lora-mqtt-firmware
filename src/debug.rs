@@ -34,8 +34,16 @@ pub async fn debug_writer_task(mut sender: Sender<'static, Driver<'static>>) {
         // Wait for a debug message
         let msg = receiver.receive().await;
 
-        // Try to send, ignore errors (port might not be connected)
-        let _ = sender.write_packet(msg.as_bytes()).await;
+        // write_packet errors outright on data longer than the USB endpoint
+        // packet (64 bytes), which silently dropped every longer message, so
+        // chunk to the endpoint size. Errors are ignored (port might not be
+        // connected).
+        let max_packet = (sender.max_packet_size() as usize).max(1);
+        for chunk in msg.as_bytes().chunks(max_packet) {
+            if sender.write_packet(chunk).await.is_err() {
+                break;
+            }
+        }
         // Send newline
         let _ = sender.write_packet(b"\r\n").await;
     }

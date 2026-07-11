@@ -63,8 +63,12 @@ impl<'d, D: Driver<'d>> Write for CdcWriter<'d, D> {
         // Wait for DTR before writing
         self.inner.wait_connection().await;
 
-        match self.inner.write_packet(buf).await {
-            Ok(()) => Ok(buf.len()),
+        // write_packet errors outright on data longer than the 64-byte USB
+        // endpoint packet, which silently dropped every frame over 64 bytes.
+        // Cap the write and let write_all loop over the rest.
+        let n = buf.len().min(self.inner.max_packet_size() as usize);
+        match self.inner.write_packet(&buf[..n]).await {
+            Ok(()) => Ok(n),
             Err(_) => Err(CdcError),
         }
     }
