@@ -151,8 +151,12 @@ impl BleClient {
             .write(&self.rx_char, &frame, WriteType::WithoutResponse)
             .await?;
 
-        // Wait for response
-        self.wait_for_response(response_timeout).await
+        // Wait for the reply this command produces
+        let expected = match cmd_id {
+            CommandId::GetVersion => ResponseId::Version,
+            CommandId::LoraTx => ResponseId::TxComplete,
+        };
+        self.wait_for_response_expecting(expected, response_timeout).await
     }
 
     /// Send a command by raw id (for testing invalid commands) and wait for the
@@ -173,7 +177,9 @@ impl BleClient {
             .write(&self.rx_char, &frame, WriteType::WithoutResponse)
             .await?;
 
-        self.wait_for_response(response_timeout).await
+        // Raw commands are the invalid-command test; an Error is the reply.
+        self.wait_for_response_expecting(ResponseId::Error, response_timeout)
+            .await
     }
 
     /// Read the next complete notification frame (any response type).
@@ -210,6 +216,34 @@ impl BleClient {
                 if response.resp_id != ResponseId::RxPacket {
                     return Ok::<_, anyhow::Error>(response);
                 }
+            }
+        })
+        .await
+        .map_err(|_| anyhow!("Timeout waiting for BLE response"))?
+    }
+
+    /// Wait for a specific command reply, skipping every unsolicited frame.
+    ///
+    /// While a BLE link is up the firmware also pushes a periodic unsolicited
+    /// Version keepalive (it stops desktop centrals hitting their supervision
+    /// timeout), which a plain wait can mistake for the reply. Skip RxPackets
+    /// always and Versions unless a Version is what we asked for; an Error
+    /// always passes through so real failures surface.
+    pub async fn wait_for_response_expecting(
+        &self,
+        expected: ResponseId,
+        response_timeout: Duration,
+    ) -> Result<Response> {
+        timeout(response_timeout, async {
+            loop {
+                let response = self.read_next_response().await?;
+                if response.resp_id == ResponseId::RxPacket {
+                    continue;
+                }
+                if response.resp_id == ResponseId::Version && expected != ResponseId::Version {
+                    continue;
+                }
+                return Ok::<_, anyhow::Error>(response);
             }
         })
         .await

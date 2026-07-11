@@ -34,6 +34,9 @@ static_cell = { version = "2.1", optional = true }
 # BLE support via esp-radio and TrouBLE
 esp-radio = { version = "0.17", features = ["esp32s3", "ble", "unstable"], optional = true }
 trouble-host = { version = "0.5", default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool"], optional = true }
+# Direct access to bt-hci command types so the BLE task can request connection
+# parameters (interval / supervision timeout) from the central after connecting.
+bt-hci = { version = "0.6", default-features = false, optional = true }
 esp-alloc = { version = "0.9", optional = true }
 
 # Async utilities for BLE
@@ -50,6 +53,12 @@ heapless = "0.8"
 
 # Critical-section implementation for host-side driver tests (host-test feature)
 critical-section = { version = "1", optional = true }
+
+# trouble-host's GATT value traits are implemented for ITS heapless (0.9),
+# not the 0.8 the wire protocol uses, so the BLE service names 0.9 explicitly
+# for the variable-length TX characteristic. Both versions are already in the
+# dependency tree.
+heapless09 = { version = "0.9", package = "heapless", optional = true }
 
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["executor"] }
@@ -92,7 +101,9 @@ embedded = [
     "static_cell",
     "esp-radio",
     "trouble-host",
+    "dep:bt-hci",
     "esp-alloc",
     "embassy-futures",
     "embassy-usb",
+    "dep:heapless09",
 ]

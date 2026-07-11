@@ -3,7 +3,11 @@
 //! Implements the BLE host task that manages connections and routes
 //! commands/responses through the Nordic UART Service.
 
+use bt_hci::cmd::le::{LeConnUpdate, LeReadLocalSupportedFeatures};
+use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pubsub::WaitResult;
+use embassy_time::{Duration, Ticker};
 use trouble_host::prelude::*;
 
 use crate::ble::service::{NordicUartService, NUS_MAX_PACKET_SIZE};
@@ -46,6 +50,23 @@ struct Server {
     nus: NordicUartService,
 }
 
+/// Notify a host-link frame to the central in NUS-sized chunks.
+///
+/// Each notification carries exactly the chunk bytes; the receiver
+/// reassembles frames on the 0x00 delimiter.
+async fn notify_frame<P: PacketPool>(
+    tx: &Characteristic<heapless09::Vec<u8, NUS_MAX_PACKET_SIZE>>,
+    conn: &GattConnection<'_, '_, P>,
+    response: &Response,
+) {
+    let encoded = wt_protocol::encode_response(response);
+    for chunk in encoded.chunks(NUS_MAX_PACKET_SIZE) {
+        let mut buf: heapless09::Vec<u8, NUS_MAX_PACKET_SIZE> = heapless09::Vec::new();
+        let _ = buf.extend_from_slice(chunk);
+        let _ = tx.notify(conn, &buf).await;
+    }
+}
+
 /// Main BLE task that manages the Bluetooth stack and connections
 ///
 /// This task:
@@ -54,7 +75,12 @@ struct Server {
 /// 3. Handles connections and GATT events
 /// 4. Routes received data to COMMAND_CHANNEL
 /// 5. Sends responses via notifications
-pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
+pub async fn ble_task<C>(controller: C, device_id: [u8; 3])
+where
+    C: Controller
+        + ControllerCmdAsync<LeConnUpdate>
+        + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+{
     // Generate unique device name from chip ID
     let mut device_name_buf = [0u8; 20];
     let device_name = format_device_name(&mut device_name_buf, &device_id);
@@ -107,12 +133,20 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
         // Shared state for command processing
         let command_sender = COMMAND_CHANNEL.sender();
 
+        // Advertise fast (default is 160 ms) so a central discovers the radio
+        // quickly and a flaky GATT connect has more attempts to land.
+        let adv_params = AdvertisementParameters {
+            interval_min: Duration::from_millis(30),
+            interval_max: Duration::from_millis(60),
+            ..Default::default()
+        };
+
         loop {
             // Start advertising
             crate::debug!("BLE: Advertising...");
             let advertiser = match peripheral
                 .advertise(
-                    &Default::default(),
+                    &adv_params,
                     Advertisement::ConnectableScannableUndirected {
                         adv_data: &adv_data[..len],
                         scan_data: &[],
@@ -139,6 +173,21 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                 Err(_) => continue,
             };
 
+            // Request faster connection parameters with the default generous
+            // supervision timeout. Web Bluetooth (Chrome on desktop and Android)
+            // otherwise negotiates parameters that drop this link after ~6s;
+            // native apps avoid it via high connection priority, which Web
+            // Bluetooth cannot request, so we ask for it from the peripheral side.
+            let conn_params = ConnectParams {
+                min_connection_interval: Duration::from_millis(15),
+                max_connection_interval: Duration::from_millis(30),
+                max_latency: 0,
+                ..Default::default()
+            };
+            if conn.raw().update_connection_params(&stack, &conn_params).await.is_err() {
+                crate::debug!("BLE: connection parameter update failed");
+            }
+
             // Handle this connection
             let mut accumulator = FrameAccumulator::new();
             let mut sequence_id: u16 = 0;
@@ -150,13 +199,23 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                 Err(_) => continue,  // No subscriber slots available
             };
 
-            loop {
-                // Use select to handle GATT events and response messages
-                let gatt_future = conn.next();
-                let response_future = response_sub.next_message_pure();
+            // Keepalive: some BLE centrals (notably desktop Chrome + BlueZ) keep a
+            // short supervision timeout and ignore our connection-parameter
+            // request, dropping an otherwise-idle link after ~5s. Pushing a small
+            // notification periodically guarantees the central keeps receiving
+            // packets, so the link holds on every host. The host treats this as a
+            // routine (unsolicited) Version response and ignores it.
+            let mut keepalive = Ticker::every(Duration::from_millis(1500));
 
-                match embassy_futures::select::select(gatt_future, response_future).await {
-                    embassy_futures::select::Either::First(gatt_event) => {
+            loop {
+                // Use select to handle GATT events, response messages and the
+                // keepalive tick.
+                let gatt_future = conn.next();
+                let response_future = response_sub.next_message();
+                let keepalive_future = keepalive.next();
+
+                match embassy_futures::select::select3(gatt_future, response_future, keepalive_future).await {
+                    embassy_futures::select::Either3::First(gatt_event) => {
                         match gatt_event {
                             GattConnectionEvent::Disconnected { reason: _ } => {
                                 crate::debug!("BLE: Disconnected");
@@ -177,20 +236,27 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                                                     // Decode COBS and parse command
                                                     match decode_and_parse(frame) {
                                                         Ok(command) => {
+                                                            let command_id = command.id();
                                                             let envelope = CommandEnvelope {
                                                                 command,
                                                                 source: CommandSource::Ble,
                                                                 sequence_id,
                                                             };
-                                                            let _ = command_sender.try_send(envelope);
+                                                            if command_sender.try_send(envelope).is_err() {
+                                                                // Queue full: tell the host rather than
+                                                                // silently dropping the command and leaving
+                                                                // it waiting on a response forever.
+                                                                crate::debug!("BLE: command queue full, rejecting");
+                                                                let response = Response::error(
+                                                                    ResponseStatus::Timeout,
+                                                                    command_id,
+                                                                );
+                                                                notify_frame(&server.nus.tx, &conn, &response).await;
+                                                            }
                                                         }
                                                         Err(response) => {
                                                             // Send error response directly via notification
-                                                            let encoded = wt_protocol::encode_response(&response);
-                                                            let mut tx_buf = [0u8; NUS_MAX_PACKET_SIZE];
-                                                            let len = encoded.len().min(tx_buf.len());
-                                                            tx_buf[..len].copy_from_slice(&encoded[..len]);
-                                                            let _ = server.nus.tx.notify(&conn, &tx_buf).await;
+                                                            notify_frame(&server.nus.tx, &conn, &response).await;
                                                         }
                                                     }
                                                 }
@@ -210,7 +276,17 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                             _ => {}
                         }
                     }
-                    embassy_futures::select::Either::Second(msg) => {
+                    embassy_futures::select::Either3::Second(wait_result) => {
+                        let msg = match wait_result {
+                            // The BLE link fell behind the publisher and messages
+                            // were dropped; make that visible instead of silent.
+                            WaitResult::Lagged(count) => {
+                                crate::debug!("BLE: response subscriber lagged, {} lost", count);
+                                continue;
+                            }
+                            WaitResult::Message(msg) => msg,
+                        };
+
                         // Filter and process response messages
                         let response = match msg {
                             ResponseMessage::Command { source, response, .. } => {
@@ -228,12 +304,23 @@ pub async fn ble_task<C: Controller>(controller: C, device_id: [u8; 3]) {
                         };
 
                         if let Some(response) = response {
-                            let encoded = wt_protocol::encode_response(&response);
-                            let mut tx_buf = [0u8; NUS_MAX_PACKET_SIZE];
-                            let len = encoded.len().min(tx_buf.len());
-                            tx_buf[..len].copy_from_slice(&encoded[..len]);
-                            let _ = server.nus.tx.notify(&conn, &tx_buf).await;
+                            // Chunk the frame across notifications: truncating
+                            // it here used to break every response over 128
+                            // bytes (any real message-sized RxPacket). The
+                            // receiver reassembles on the 0x00 delimiter.
+                            notify_frame(&server.nus.tx, &conn, &response).await;
                         }
+                    }
+                    embassy_futures::select::Either3::Third(_) => {
+                        // Keepalive tick: send an unsolicited Version notification so
+                        // the central keeps receiving packets and never hits its
+                        // supervision timeout on an idle link.
+                        let response = Response::Version {
+                            major: config::protocol::VERSION_MAJOR,
+                            minor: config::protocol::VERSION_MINOR,
+                            patch: config::protocol::VERSION_PATCH,
+                        };
+                        notify_frame(&server.nus.tx, &conn, &response).await;
                     }
                 }
             }

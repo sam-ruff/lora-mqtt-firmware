@@ -21,7 +21,10 @@ pub struct NordicUartService {
     #[characteristic(uuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e", write, write_without_response, value = [0u8; 128])]
     pub rx: [u8; NUS_MAX_PACKET_SIZE],
 
-    /// TX Characteristic - server notifies COBS frames here
-    #[characteristic(uuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e", notify, value = [0u8; 128])]
-    pub tx: [u8; NUS_MAX_PACKET_SIZE],
+    /// TX Characteristic - server notifies COBS frames here.
+    /// Variable-length so notifications carry exactly the frame bytes;
+    /// zero-padding to the full 128 used to waste airtime on every packet.
+    /// (heapless09 because trouble-host's GATT traits are on that version.)
+    #[characteristic(uuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e", notify, value = heapless09::Vec::new())]
+    pub tx: heapless09::Vec<u8, NUS_MAX_PACKET_SIZE>,
 }
