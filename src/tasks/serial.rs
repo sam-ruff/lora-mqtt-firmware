@@ -115,7 +115,15 @@ pub async fn serial_writer_task<W: Write>(mut writer: W) {
     let mut response_sub = RESPONSE_CHANNEL.subscriber().unwrap();
 
     loop {
-        let msg = response_sub.next_message_pure().await;
+        let msg = match response_sub.next_message().await {
+            // The serial link fell behind the publisher and messages were
+            // dropped; make that visible instead of silent.
+            embassy_sync::pubsub::WaitResult::Lagged(count) => {
+                crate::debug!("Serial: response subscriber lagged, {} lost", count);
+                continue;
+            }
+            embassy_sync::pubsub::WaitResult::Message(msg) => msg,
+        };
 
         // Filter and process messages
         let response = match msg {
