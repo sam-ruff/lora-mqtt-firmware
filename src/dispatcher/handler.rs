@@ -129,6 +129,8 @@ impl CommandDispatcher {
     fn lora_error_to_response(&self, error: LoraError, command: Command) -> Response {
         let status = match error {
             LoraError::Timeout => ResponseStatus::Timeout,
+            // A rejected payload (empty or beyond the modem's 255-byte limit)
+            LoraError::InvalidConfig => ResponseStatus::InvalidLength,
             _ => ResponseStatus::LoraError,
         };
         Response::error(status, command.id())

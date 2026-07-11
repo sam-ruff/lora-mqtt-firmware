@@ -28,6 +28,20 @@ pub fn image_cal_params(freq_hz: u32) -> (u8, u8) {
     }
 }
 
+/// Whether low data rate optimisation must be enabled.
+///
+/// The datasheet requires LDRO when the LoRa symbol time reaches 16.38 ms:
+/// SF11 and SF12 at 125 kHz, and SF12 at 250 kHz. The symbol time is
+/// 2^SF / BW; the bandwidth label in kHz is close enough for the threshold,
+/// which only bites at 125/250 kHz.
+pub fn ldro_enabled(spreading_factor: u8, bandwidth_khz: u32) -> bool {
+    if bandwidth_khz == 0 || spreading_factor >= 32 {
+        return true;
+    }
+    let symbol_time_us = (1u64 << spreading_factor) * 1000 / bandwidth_khz as u64;
+    symbol_time_us >= 16_384
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,5 +70,20 @@ mod tests {
     #[test]
     fn out_of_band_falls_back_to_eu868() {
         assert_eq!(image_cal_params(100_000_000), (0xD7, 0xDB));
+    }
+
+    #[test]
+    fn ldro_matches_datasheet_combinations() {
+        // Datasheet 13.4.5: "typically SF11 with BW125 and SF12 with BW125
+        // and BW250".
+        assert!(ldro_enabled(11, 125));
+        assert!(ldro_enabled(12, 125));
+        assert!(ldro_enabled(12, 250));
+        // The firmware default (SF11 at 250 kHz) sits below the threshold.
+        assert!(!ldro_enabled(11, 250));
+        assert!(!ldro_enabled(12, 500));
+        assert!(!ldro_enabled(7, 125));
+        // Very low bandwidths always need it.
+        assert!(ldro_enabled(9, 8));
     }
 }
