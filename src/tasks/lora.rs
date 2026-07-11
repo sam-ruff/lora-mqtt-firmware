@@ -41,18 +41,33 @@ pub async fn lora_task<R: LoraRadio>(
         Err(_) => crate::debug!("LoRa: Radio init failed"),
     }
 
+    let mut arm_failure_logged = false;
+
     loop {
-        // Listen for a packet and a host command at the same time. select drops
-        // the losing future, so when a command arrives the in-flight receive() is
-        // cancelled (radio stays in RX; the next transmit/receive takes over).
+        // Make sure the radio is listening before waiting. Done OUTSIDE the
+        // select below because arming talks SPI and must not be cancelled.
+        match radio.arm_receive().await {
+            Ok(()) => arm_failure_logged = false,
+            Err(_) if arm_failure_logged => {}
+            Err(_) => {
+                crate::debug!("LoRa: RX arm failed; still serving host commands");
+                arm_failure_logged = true;
+            }
+        }
+
+        // Wait for a radio event and a host command at the same time. Only
+        // wait_rx_event may be raced here: it is cancel-safe (pure GPIO/timer,
+        // no SPI), so dropping it cannot cut an SPI transaction in half or
+        // lose a packet. The SPI-heavy read_packet happens after the select.
         match select(
-            radio.receive(RX_POLL_INTERVAL_MS),
+            radio.wait_rx_event(RX_POLL_INTERVAL_MS),
             command_receiver.receive(),
         )
         .await
         {
-            Either::First(rx_result) => match rx_result {
-                Ok(packet) => {
+            Either::First(Ok(())) => {
+                // CRC errors and spurious IRQs return Err; the radio stays in RX.
+                if let Ok(packet) = radio.read_packet().await {
                     // Signal LED flash for received packet (non-blocking)
                     let _ = led_sender.try_send(LedFlashDuration::Default);
 
@@ -71,9 +86,9 @@ pub async fn lora_task<R: LoraRadio>(
                     // Broadcast unsolicited to all subscribers (serial, BLE)
                     response_pub.publish_immediate(ResponseMessage::Unsolicited(response));
                 }
-                // Timeout is the normal idle case; other errors just re-loop.
-                Err(_) => {}
-            },
+            }
+            // Timeout is the normal idle case; re-loop and re-arm.
+            Either::First(Err(_)) => {}
             Either::Second(envelope) => {
                 handle_command(&dispatcher, &mut radio, &led_sender, &response_pub, envelope).await;
             }

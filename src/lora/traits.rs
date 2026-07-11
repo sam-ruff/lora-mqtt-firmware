@@ -81,10 +81,23 @@ pub trait LoraRadio {
     /// Blocks until transmission is complete or an error occurs.
     fn transmit(&mut self, data: &[u8]) -> impl Future<Output = Result<(), LoraError>>;
 
-    /// Receive data with timeout
+    /// Ensure the radio is listening in continuous RX.
     ///
-    /// Listens for incoming packets until one is received or the timeout expires.
-    fn receive(&mut self, timeout_ms: u32) -> impl Future<Output = Result<RxPacket, LoraError>>;
+    /// Involves SPI traffic, so it is NOT cancel-safe: never race it in a
+    /// select. A no-op when the radio is already armed.
+    fn arm_receive(&mut self) -> impl Future<Output = Result<(), LoraError>>;
+
+    /// Wait until the radio signals a pending RX event or the timeout expires.
+    ///
+    /// Cancel-safe: implementations must not touch the SPI bus here, so the
+    /// future can be raced in a select and dropped at any await point.
+    fn wait_rx_event(&mut self, timeout_ms: u32) -> impl Future<Output = Result<(), LoraError>>;
+
+    /// Read the packet behind a signalled RX event.
+    ///
+    /// Call after `wait_rx_event` succeeds. Involves SPI traffic, so it is
+    /// NOT cancel-safe: never race it in a select.
+    fn read_packet(&mut self) -> impl Future<Output = Result<RxPacket, LoraError>>;
 
     /// Configure the radio parameters
     fn configure(&mut self, config: &LoraConfig) -> impl Future<Output = Result<(), LoraError>>;
@@ -187,7 +200,20 @@ pub mod mock {
             Ok(())
         }
 
-        async fn receive(&mut self, _timeout_ms: u32) -> Result<RxPacket, LoraError> {
+        async fn arm_receive(&mut self) -> Result<(), LoraError> {
+            Ok(())
+        }
+
+        async fn wait_rx_event(&mut self, _timeout_ms: u32) -> Result<(), LoraError> {
+            // An event is pending when a packet or an injected error waits.
+            if self.next_rx_error.borrow().is_some() || !self.rx_queue.borrow().is_empty() {
+                Ok(())
+            } else {
+                Err(LoraError::Timeout)
+            }
+        }
+
+        async fn read_packet(&mut self) -> Result<RxPacket, LoraError> {
             if let Some(error) = self.next_rx_error.borrow_mut().take() {
                 return Err(error);
             }
@@ -195,12 +221,9 @@ pub mod mock {
             // Pop from front (FIFO order)
             let mut queue = self.rx_queue.borrow_mut();
             if queue.is_empty() {
-                return Err(LoraError::Timeout);
+                return Err(LoraError::ReceiveFailed);
             }
-
-            // Remove first element
-            let packet = queue.remove(0);
-            Ok(packet)
+            Ok(queue.remove(0))
         }
 
         async fn configure(&mut self, config: &LoraConfig) -> Result<(), LoraError> {
@@ -249,7 +272,9 @@ pub mod mock {
                     snr: 10,
                 });
 
-                let packet = radio.receive(1000).await.unwrap();
+                radio.arm_receive().await.unwrap();
+                radio.wait_rx_event(1000).await.unwrap();
+                let packet = radio.read_packet().await.unwrap();
                 assert_eq!(packet.data.as_slice(), data.as_slice());
                 assert_eq!(packet.rssi, -50);
                 assert_eq!(packet.snr, 10);
@@ -261,7 +286,7 @@ pub mod mock {
             let mut radio = MockLoraRadio::new();
 
             futures::executor::block_on(async {
-                let result = radio.receive(1000).await;
+                let result = radio.wait_rx_event(1000).await;
                 assert_eq!(result, Err(LoraError::Timeout));
             });
         }
