@@ -23,6 +23,10 @@ path = "src/ble_serial_tests.rs"
 name = "ble-ble-tests"
 path = "src/ble_ble_tests.rs"
 
+[[bin]]
+name = "duty-cycle-tests"
+path = "src/duty_cycle_tests.rs"
+
 [dependencies]
 # Serial port communication (usbportinfo-interface exposes the USB interface
 # number so we can tell the data CDC from the debug CDC deterministically)
