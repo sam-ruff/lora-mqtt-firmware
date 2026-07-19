@@ -29,7 +29,7 @@ pub async fn lora_task<R: LoraRadio>(
     command_receiver: CommandReceiver,
     led_sender: LedSender,
 ) {
-    let dispatcher = CommandDispatcher::new();
+    let mut dispatcher = CommandDispatcher::new();
 
     // Get publisher for all responses (broadcasts to all subscribers)
     let response_pub = RESPONSE_CHANNEL.immediate_publisher();
@@ -90,7 +90,8 @@ pub async fn lora_task<R: LoraRadio>(
             // Timeout is the normal idle case; re-loop and re-arm.
             Either::First(Err(_)) => {}
             Either::Second(envelope) => {
-                handle_command(&dispatcher, &mut radio, &led_sender, &response_pub, envelope).await;
+                handle_command(&mut dispatcher, &mut radio, &led_sender, &response_pub, envelope)
+                    .await;
             }
         }
     }
@@ -98,7 +99,7 @@ pub async fn lora_task<R: LoraRadio>(
 
 /// Dispatch a single host command and publish its response.
 async fn handle_command<R: LoraRadio>(
-    dispatcher: &CommandDispatcher,
+    dispatcher: &mut CommandDispatcher,
     radio: &mut R,
     led_sender: &LedSender,
     response_pub: &crate::dispatcher::ResponsePublisher,
@@ -122,7 +123,8 @@ async fn handle_command<R: LoraRadio>(
         }
     }
 
-    let response = dispatcher.dispatch(radio, envelope.command).await;
+    let now_ms = embassy_time::Instant::now().as_millis();
+    let response = dispatcher.dispatch(radio, envelope.command, now_ms).await;
 
     // Log response
     match &response {
@@ -130,7 +132,10 @@ async fn handle_command<R: LoraRadio>(
             crate::debug!("Version: {}.{}.{}", major, minor, patch);
         }
         Response::TxComplete => crate::debug!("LoRa TX: Complete"),
-        Response::Error { status, .. } => crate::debug!("LoRa TX: Failed ({:?})", status),
+        Response::RadioConfig { spreading_factor, frequency_hz, .. } => {
+            crate::debug!("Radio config: SF{} @ {} Hz", spreading_factor, frequency_hz);
+        }
+        Response::Error { status, .. } => crate::debug!("Command failed ({:?})", status),
         _ => {}
     }
 

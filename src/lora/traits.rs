@@ -126,6 +126,8 @@ pub mod mock {
         next_tx_error: RefCell<Option<LoraError>>,
         /// Error to return on next receive
         next_rx_error: RefCell<Option<LoraError>>,
+        /// Error to return on next configure
+        next_configure_error: RefCell<Option<LoraError>>,
         /// Whether init has been called
         initialised: RefCell<bool>,
     }
@@ -139,6 +141,7 @@ pub mod mock {
                 config: RefCell::new(None),
                 next_tx_error: RefCell::new(None),
                 next_rx_error: RefCell::new(None),
+                next_configure_error: RefCell::new(None),
                 initialised: RefCell::new(false),
             }
         }
@@ -156,6 +159,11 @@ pub mod mock {
         /// Set an error to be returned by the next receive() call
         pub fn set_next_rx_error(&self, error: LoraError) {
             *self.next_rx_error.borrow_mut() = Some(error);
+        }
+
+        /// Set an error to be returned by the next configure() call
+        pub fn set_next_configure_error(&self, error: LoraError) {
+            *self.next_configure_error.borrow_mut() = Some(error);
         }
 
         /// Get all transmitted packets
@@ -227,6 +235,9 @@ pub mod mock {
         }
 
         async fn configure(&mut self, config: &LoraConfig) -> Result<(), LoraError> {
+            if let Some(error) = self.next_configure_error.borrow_mut().take() {
+                return Err(error);
+            }
             *self.config.borrow_mut() = Some(config.clone());
             Ok(())
         }

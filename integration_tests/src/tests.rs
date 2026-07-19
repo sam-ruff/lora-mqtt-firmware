@@ -59,6 +59,9 @@ pub fn run_all_tests(device: &mut DeviceClient) -> Vec<TestResult> {
         run_test("GetVersion returns version bytes", device, test_get_version),
         run_test("Invalid command returns error", device, test_invalid_command),
         run_test("Multiple GetVersion calls succeed", device, test_multiple_get_version),
+        run_test("GetRadioConfig reports SF11 default", device, test_radio_config_default),
+        run_test("SetSpreadingFactor applies and restores", device, test_set_spreading_factor),
+        run_test("Out-of-range SF is rejected", device, test_invalid_spreading_factor),
     ]
 }
 
@@ -151,6 +154,94 @@ fn test_invalid_command(device: &mut DeviceClient) -> TestResult {
         }
         Err(e) => TestResult::fail("test", &format!("Error: {}", e)),
     }
+}
+
+/// RadioConfig payload: [freq_hz: u32 LE][sf: u8][bw_khz: u32 LE][cr: u8][power: i8]
+fn parse_radio_config(payload: &[u8]) -> Result<(u32, u8, u32, u8, i8), String> {
+    if payload.len() != 11 {
+        return Err(format!("Expected 11-byte RadioConfig, got {}", payload.len()));
+    }
+    Ok((
+        u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]),
+        payload[4],
+        u32::from_le_bytes([payload[5], payload[6], payload[7], payload[8]]),
+        payload[9],
+        payload[10] as i8,
+    ))
+}
+
+fn test_radio_config_default(device: &mut DeviceClient) -> TestResult {
+    match device.send_command(CommandId::GetRadioConfig, &[]) {
+        Ok(response) => {
+            if response.resp_id != ResponseId::RadioConfig {
+                return TestResult::fail(
+                    "test",
+                    &format!("Expected RadioConfig response, got {:?}", response.resp_id),
+                );
+            }
+            match parse_radio_config(&response.payload) {
+                Ok((freq, sf, bw, _cr, _power)) => {
+                    print!("(SF{} @ {} Hz, {} kHz) ", sf, freq, bw);
+                    if sf != 11 {
+                        return TestResult::fail("test", &format!("Expected SF11 default, got SF{}", sf));
+                    }
+                    TestResult::pass("test")
+                }
+                Err(e) => TestResult::fail("test", &e),
+            }
+        }
+        Err(e) => TestResult::fail("test", &format!("Error: {}", e)),
+    }
+}
+
+fn test_set_spreading_factor(device: &mut DeviceClient) -> TestResult {
+    // Change SF, verify the reply and a fresh read, then restore the default
+    // so later over-the-air tests still match other boards.
+    for target in [9u8, 11u8] {
+        match device.send_command(CommandId::SetSpreadingFactor, &[target]) {
+            Ok(response) => {
+                if response.resp_id != ResponseId::RadioConfig {
+                    return TestResult::fail(
+                        "test",
+                        &format!("Expected RadioConfig response, got {:?}", response.resp_id),
+                    );
+                }
+                match parse_radio_config(&response.payload) {
+                    Ok((_, sf, _, _, _)) if sf == target => {}
+                    Ok((_, sf, _, _, _)) => {
+                        return TestResult::fail("test", &format!("Asked for SF{}, got SF{}", target, sf));
+                    }
+                    Err(e) => return TestResult::fail("test", &e),
+                }
+            }
+            Err(e) => return TestResult::fail("test", &format!("Error: {}", e)),
+        }
+    }
+    TestResult::pass("test")
+}
+
+fn test_invalid_spreading_factor(device: &mut DeviceClient) -> TestResult {
+    for bad_sf in [6u8, 13u8] {
+        match device.send_command(CommandId::SetSpreadingFactor, &[bad_sf]) {
+            Ok(response) => {
+                if response.resp_id != ResponseId::Error {
+                    return TestResult::fail(
+                        "test",
+                        &format!("SF{} accepted: got {:?}", bad_sf, response.resp_id),
+                    );
+                }
+                let status = response.payload.first().copied();
+                if status != Some(ResponseStatus::InvalidParameter as u8) {
+                    return TestResult::fail(
+                        "test",
+                        &format!("Expected InvalidParameter (0x05), got {:?}", status),
+                    );
+                }
+            }
+            Err(e) => return TestResult::fail("test", &format!("Error: {}", e)),
+        }
+    }
+    TestResult::pass("test")
 }
 
 fn test_multiple_get_version(device: &mut DeviceClient) -> TestResult {

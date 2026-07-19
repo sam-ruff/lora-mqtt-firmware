@@ -14,7 +14,9 @@ pub mod lora;
 pub mod ble;
 #[cfg(feature = "embedded")]
 pub mod debug;
-#[cfg(feature = "embedded")]
+// The dispatcher itself is plain async and unit-tested on the host; only its
+// embassy-sync channels are embedded-gated (inside the module).
+#[cfg(any(feature = "embedded", feature = "host-test"))]
 pub mod dispatcher;
 
 /// No-op debug macro for non-embedded builds (tests).
