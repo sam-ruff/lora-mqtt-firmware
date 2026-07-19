@@ -9,6 +9,7 @@ lora = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/
 ble = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-tests --"
 ble-serial = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-serial-tests -- --port-b auto"
 ble-ble = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-ble-tests --"
+duty = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin duty-cycle-tests -- --port auto"
 
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor"
