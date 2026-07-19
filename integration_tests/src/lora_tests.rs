@@ -60,6 +60,12 @@ fn main() -> anyhow::Result<()> {
     verify_device(&mut device_a, "A")?;
     verify_device(&mut device_b, "B")?;
 
+    // Run the suite at SF7: ~12x less airtime than the SF11 default, so the
+    // tests are faster and burn far less duty cycle budget. Restored below.
+    println!("Switching both devices to SF7 for the test run...");
+    device_a.set_spreading_factor(7)?;
+    device_b.set_spreading_factor(7)?;
+
     // Prime the link before scoring. The first over-the-air packet after the
     // radios have been idle is often missed: the receiver re-arms RX between poll
     // cycles, so a packet can land in that gap. (The app layer handles this with
@@ -148,6 +154,16 @@ fn main() -> anyhow::Result<()> {
             println!("    {}", e.to_string().red());
             failed += 1;
         }
+    }
+
+    // Restore the SF11 default so the boards are left in their boot state
+    // (best effort: a reboot also restores it).
+    println!("\nRestoring both devices to SF11...");
+    if let Err(e) = device_a.set_spreading_factor(11) {
+        println!("  Device A restore failed: {}", e);
+    }
+    if let Err(e) = device_b.set_spreading_factor(11) {
+        println!("  Device B restore failed: {}", e);
     }
 
     // Summary

@@ -266,20 +266,24 @@ Protocol version is currently `1`. The firmware will reject commands with mismat
 
 ### Commands
 
-| ID   | Command    | Payload              | Response   | Description                        |
-|------|------------|----------------------|------------|------------------------------------|
-| 0x01 | GetVersion | None                 | Version    | Returns firmware version           |
-| 0x03 | Reboot     | None                 | None       | Reboots the device (no response)   |
-| 0x10 | LoraTx     | Data bytes (max 256) | TxComplete | Transmits data over LoRa           |
+| ID   | Command            | Payload              | Response    | Description                        |
+|------|--------------------|----------------------|-------------|------------------------------------|
+| 0x01 | GetVersion         | None                 | Version     | Returns firmware version           |
+| 0x03 | Reboot             | None                 | None        | Reboots the device (no response)   |
+| 0x10 | LoraTx             | Data bytes (max 256) | TxComplete  | Transmits data over LoRa           |
+| 0x11 | SetSpreadingFactor | sf (u8, 7-12)        | RadioConfig | Sets the LoRa spreading factor     |
+| 0x12 | GetRadioConfig     | None                 | RadioConfig | Reads the active radio config      |
 
 ### Responses
 
-| ID   | Response   | Payload                          | Description                              |
-|------|------------|----------------------------------|------------------------------------------|
-| 0x01 | Version    | major, minor, patch (3 bytes)    | Firmware version response                |
-| 0x10 | TxComplete | None                             | LoRa transmission completed successfully |
-| 0x11 | RxPacket   | data, rssi (i16 LE), snr (i8)    | Received LoRa packet (unsolicited)       |
-| 0xFF | Error      | status code, original command ID | Error response with status and cmd ID    |
+| ID   | Response    | Payload                                                             | Description                              |
+|------|-------------|---------------------------------------------------------------------|------------------------------------------|
+| 0x01 | Version     | major, minor, patch (3 bytes)                                       | Firmware version response                |
+| 0x10 | TxComplete  | None                                                                | LoRa transmission completed successfully |
+| 0x11 | RxPacket    | data, rssi (i16 LE), snr (i8)                                       | Received LoRa packet (unsolicited)       |
+| 0x12 | RadioConfig | freq_hz (u32 LE), sf (u8), bw_khz (u32 LE), cr (u8), tx_power (i8)  | Active radio configuration (11 bytes)    |
+| 0x13 | TxRefused   | retry_after_secs (u32 LE)                                           | TX refused by the duty cycle limiter     |
+| 0xFF | Error       | status code, original command ID                                    | Error response with status and cmd ID    |
 
 ### Response Format
 
@@ -302,15 +306,33 @@ The host must be ready to receive these at any time.
 
 ### Response Status Codes
 
-| Code | Status         | Description                              |
-|------|----------------|------------------------------------------|
-| 0x00 | Success        | Command executed successfully            |
-| 0x01 | InvalidCommand | Unknown command ID                       |
-| 0x02 | InvalidLength  | Payload length invalid for command       |
-| 0x03 | CrcError       | CRC-16 checksum mismatch                 |
-| 0x04 | InvalidVersion | Protocol version mismatch                |
-| 0x10 | LoraError      | LoRa radio error during operation        |
-| 0x11 | Timeout        | Operation timed out                      |
+| Code | Status           | Description                                        |
+|------|------------------|----------------------------------------------------|
+| 0x00 | Success          | Command executed successfully                      |
+| 0x01 | InvalidCommand   | Unknown command ID                                 |
+| 0x02 | InvalidLength    | Payload length invalid for command                 |
+| 0x03 | CrcError         | CRC-16 checksum mismatch                           |
+| 0x04 | InvalidVersion   | Protocol version mismatch                          |
+| 0x05 | InvalidParameter | Parameter out of range (e.g. SF outside 7-12)      |
+| 0x10 | LoraError        | LoRa radio error during operation                  |
+| 0x11 | Timeout          | Operation timed out                                |
+
+### Radio Configuration and Duty Cycle
+
+The radio boots at 869.525 MHz, spreading factor 11, 250 kHz bandwidth, coding
+rate 4/8 and +22 dBm. The spreading factor can be changed at runtime with
+`SetSpreadingFactor` (7-12); it is not persisted and reverts to SF11 on reboot.
+Both radios in a link must use the same spreading factor.
+
+Transmissions are checked against the EU duty cycle rules (ERC 70-03) for the
+sub-band containing the configured frequency; 869.4-869.65 MHz allows 10%
+airtime per sliding hour (360 s). Spent airtime is tracked with the Semtech
+time-on-air formula, and a `LoraTx` that would exceed the remaining budget is
+refused without transmitting: the firmware replies `TxRefused` with the number
+of seconds until enough budget frees up (`0xFFFFFFFF` if the packet exceeds the
+entire hourly budget). At SF11 a full 255-byte packet costs about 3.25 s of
+airtime, so roughly 110 of them fit in an hour; lower spreading factors are far
+cheaper.
 
 ### Example Frames
 

@@ -70,6 +70,16 @@ async fn main() -> anyhow::Result<()> {
     device_a.clear_buffer().await;
     device_b.clear_buffer().await;
 
+    // Run the suite at SF7: ~12x less airtime than the SF11 default, so the
+    // tests are faster and burn far less duty cycle budget. Restored below.
+    println!("Switching both devices to SF7 for the test run...");
+    device_a
+        .set_spreading_factor(7, Duration::from_secs(2))
+        .await?;
+    device_b
+        .set_spreading_factor(7, Duration::from_secs(2))
+        .await?;
+
     // Prime both directions so the first scored LoRa test does not eat the
     // cold-start packet miss (the receiver re-arms RX between poll cycles).
     print!("Warming up LoRa link... ");
@@ -171,6 +181,16 @@ async fn main() -> anyhow::Result<()> {
             println!("    {}", e.to_string().red());
             failed += 1;
         }
+    }
+
+    // Restore the SF11 default so the boards are left in their boot state
+    // (best effort: a reboot also restores it).
+    println!("\nRestoring both devices to SF11...");
+    if let Err(e) = device_a.set_spreading_factor(11, Duration::from_secs(2)).await {
+        println!("  Device A restore failed: {}", e);
+    }
+    if let Err(e) = device_b.set_spreading_factor(11, Duration::from_secs(2)).await {
+        println!("  Device B restore failed: {}", e);
     }
 
     // Disconnect BLE

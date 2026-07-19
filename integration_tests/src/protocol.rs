@@ -13,6 +13,8 @@ pub const PROTOCOL_VERSION: u8 = 1;
 pub enum CommandId {
     GetVersion = 0x01,
     LoraTx = 0x10,
+    SetSpreadingFactor = 0x11,
+    GetRadioConfig = 0x12,
 }
 
 /// Response status codes matching the firmware protocol.
@@ -24,6 +26,7 @@ pub enum ResponseStatus {
     InvalidLength = 0x02,
     CrcError = 0x03,
     InvalidVersion = 0x04,
+    InvalidParameter = 0x05,
     LoraError = 0x10,
     Timeout = 0x11,
 }
@@ -38,6 +41,7 @@ impl TryFrom<u8> for ResponseStatus {
             0x02 => Ok(ResponseStatus::InvalidLength),
             0x03 => Ok(ResponseStatus::CrcError),
             0x04 => Ok(ResponseStatus::InvalidVersion),
+            0x05 => Ok(ResponseStatus::InvalidParameter),
             0x10 => Ok(ResponseStatus::LoraError),
             0x11 => Ok(ResponseStatus::Timeout),
             _ => Err(value),
@@ -86,6 +90,8 @@ pub enum ResponseId {
     Version = 0x01,
     TxComplete = 0x10,
     RxPacket = 0x11,
+    RadioConfig = 0x12,
+    TxRefused = 0x13,
     Error = 0xFF,
 }
 
@@ -97,6 +103,8 @@ impl TryFrom<u8> for ResponseId {
             0x01 => Ok(ResponseId::Version),
             0x10 => Ok(ResponseId::TxComplete),
             0x11 => Ok(ResponseId::RxPacket),
+            0x12 => Ok(ResponseId::RadioConfig),
+            0x13 => Ok(ResponseId::TxRefused),
             0xFF => Ok(ResponseId::Error),
             _ => Err(value),
         }

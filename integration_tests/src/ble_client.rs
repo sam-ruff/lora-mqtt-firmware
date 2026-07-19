@@ -155,6 +155,7 @@ impl BleClient {
         let expected = match cmd_id {
             CommandId::GetVersion => ResponseId::Version,
             CommandId::LoraTx => ResponseId::TxComplete,
+            CommandId::SetSpreadingFactor | CommandId::GetRadioConfig => ResponseId::RadioConfig,
         };
         self.wait_for_response_expecting(expected, response_timeout).await
     }
@@ -299,6 +300,17 @@ impl BleClient {
     pub async fn lora_tx(&self, data: &[u8], response_timeout: Duration) -> Result<Response> {
         self.send_command(CommandId::LoraTx, data, response_timeout)
             .await
+    }
+
+    /// Set the spreading factor, verifying the device confirms it.
+    pub async fn set_spreading_factor(&self, sf: u8, response_timeout: Duration) -> Result<()> {
+        let response = self
+            .send_command(CommandId::SetSpreadingFactor, &[sf], response_timeout)
+            .await?;
+        if response.payload.get(4) != Some(&sf) {
+            return Err(anyhow!("Device did not apply SF{}", sf));
+        }
+        Ok(())
     }
 
     /// Disconnect from the device.

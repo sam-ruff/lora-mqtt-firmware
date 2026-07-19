@@ -290,6 +290,18 @@ impl DeviceClient {
         self.send_command(CommandId::LoraTx, data)
     }
 
+    /// Set the spreading factor, verifying the device confirms it.
+    pub fn set_spreading_factor(&mut self, sf: u8) -> Result<()> {
+        let response = self.send_command(CommandId::SetSpreadingFactor, &[sf])?;
+        if response.resp_id != ResponseId::RadioConfig {
+            anyhow::bail!("Expected RadioConfig, got {:?}", response.resp_id);
+        }
+        if response.payload.get(4) != Some(&sf) {
+            anyhow::bail!("Device did not apply SF{}", sf);
+        }
+        Ok(())
+    }
+
     /// Try to read an unsolicited response (non-blocking with short timeout).
     /// Returns None if no response available within timeout.
     pub fn try_read_response(&mut self, timeout: Duration) -> Result<Option<Response>> {

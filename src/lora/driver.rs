@@ -999,6 +999,23 @@ mod host_tests {
     }
 
     #[test]
+    fn init_applies_sf11_default() {
+        embassy_time::MockDriver::get().reset();
+        let writes = Rc::new(RefCell::new(StdVec::new()));
+        let mut driver = build_driver(writes.clone());
+
+        run(driver.init()).expect("init should succeed");
+
+        let writes = writes.borrow();
+        let modulation = first_index(&writes, cmd::SET_MODULATION_PARAMS)
+            .expect("modulation params must be set during init");
+        // [opcode, SF, BW, CR, LDRO]
+        assert_eq!(writes[modulation][1], 11, "default must be SF11");
+        assert_eq!(writes[modulation][2], 0x05, "250 kHz bandwidth code");
+        assert_eq!(writes[modulation][4], 0x00, "SF11 at 250 kHz needs no LDRO");
+    }
+
+    #[test]
     fn transmit_rejects_payload_over_255_bytes() {
         embassy_time::MockDriver::get().reset();
         let writes = Rc::new(RefCell::new(StdVec::new()));

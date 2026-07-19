@@ -9,8 +9,11 @@ pub mod tcxo {
 
 /// Default LoRa configuration
 pub mod lora_defaults {
-    /// Frequency in Hz (869.525 MHz)
+    /// Frequency in Hz (869.525 MHz), in the EU868 869.4-869.65 MHz sub-band
+    /// (10% duty cycle, 500 mW ERP).
     pub const FREQUENCY_HZ: u32 = 869_525_000;
+    /// Long-range default. Adjustable at runtime (7-12) via the
+    /// SetSpreadingFactor host command; resets to this default on reboot.
     pub const SPREADING_FACTOR: u8 = 11;
     pub const BANDWIDTH_KHZ: u32 = 250;
     /// Coding rate 4/8 (higher redundancy)
