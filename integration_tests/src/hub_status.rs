@@ -21,6 +21,9 @@ struct Args {
     /// hotspot)
     #[arg(long)]
     clear: bool,
+    /// Switch the operating mode ("bridge" or "gateway") and reboot
+    #[arg(long)]
+    mode: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -31,6 +34,20 @@ fn main() -> Result<()> {
 
     let version = hub.get_version(Duration::from_secs(3))?;
     println!("hub {port} firmware v{}.{}.{}", version.0, version.1, version.2);
+
+    // Mode switches and factory resets run before the read-out so they work
+    // even when a longer response is misbehaving.
+    if let Some(mode) = args.mode.as_deref() {
+        let byte = match mode {
+            "bridge" => 0u8,
+            "gateway" => 1u8,
+            other => anyhow::bail!("mode must be bridge or gateway, got {other:?}"),
+        };
+        hub.expect_config_ack(HubCommandId::SetMode, &[byte])?;
+        hub.reboot()?;
+        println!("mode set to {mode}, hub rebooting");
+        return Ok(());
+    }
 
     let response = hub.send_hub_command(HubCommandId::GetHubStatus, &[])?;
     anyhow::ensure!(
