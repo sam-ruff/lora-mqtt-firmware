@@ -7,9 +7,11 @@ pub mod hub_ctrl;
 pub mod led;
 pub mod lora;
 pub mod serial;
+pub mod wifi;
 
 pub use admin::{admin_task, AdminReceiver, ADMIN_CHANNEL};
 pub use hub_ctrl::hub_ctrl_task;
 pub use led::{led_task, LedReceiver, LedSender, LED_CHANNEL};
 pub use lora::lora_task;
 pub use serial::{serial_reader_task, serial_writer_task, CommandReceiver, CommandSender};
+pub use wifi::{net_watch_task, wifi_task};

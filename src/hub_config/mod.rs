@@ -60,7 +60,6 @@ impl Default for HubConfig {
 
 impl HubConfig {
     /// WiFi is only attempted once an SSID exists.
-    #[allow(dead_code)] // consumed by the wifi task
     pub fn wifi_provisioned(&self) -> bool {
         !self.wifi.ssid.is_empty()
     }
