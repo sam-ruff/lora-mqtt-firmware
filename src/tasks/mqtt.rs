@@ -224,8 +224,9 @@ fn topic_name(topic: &str) -> Option<TopicName<'_>> {
     TopicName::new(MqttString::try_from(topic).ok()?)
 }
 
-/// Literal IPv4 first, DNS A lookup otherwise.
-async fn resolve_host(stack: Stack<'static>, host: &str) -> Option<IpAddress> {
+/// Literal IPv4 first, DNS A lookup otherwise. Shared with the gateway's
+/// UDP task.
+pub async fn resolve_host(stack: Stack<'static>, host: &str) -> Option<IpAddress> {
     if let Ok(addr) = host.parse::<Ipv4Addr>() {
         return Some(IpAddress::Ipv4(addr));
     }

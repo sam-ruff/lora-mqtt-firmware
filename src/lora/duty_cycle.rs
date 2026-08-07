@@ -30,6 +30,22 @@ pub fn eu_duty_cycle_permille(freq_hz: u32) -> Option<u16> {
     }
 }
 
+/// Identity of the sub-band containing `freq_hz`, for keeping one budget per
+/// sub-band (e.g. a LoRaWAN RX1 downlink on 868.1 MHz and an RX2 downlink on
+/// 869.525 MHz draw from different budgets). Kept next to the table above so
+/// the boundaries cannot drift apart. 0 means no EU limit applies.
+pub fn eu_band_key(freq_hz: u32) -> u8 {
+    match freq_hz {
+        433_050_000..=434_790_000 => 1,
+        868_000_000..=868_600_000 => 2,
+        868_700_000..=869_200_000 => 3,
+        869_400_000..=869_650_000 => 4,
+        869_700_000..=870_000_000 => 5,
+        f if (863_000_000..870_000_000).contains(&f) => 6,
+        _ => 0,
+    }
+}
+
 /// A transmission was refused because it would exceed the duty cycle budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DutyCycleExceeded {

@@ -37,6 +37,7 @@ mod bridge;
 mod config;
 mod debug;
 mod dispatcher;
+mod gateway;
 mod hub_config;
 mod lora;
 mod net;
@@ -46,7 +47,9 @@ mod usb;
 use dispatcher::COMMAND_CHANNEL;
 use hub_config::store::ConfigStore;
 use hub_config::HubConfig;
+use hub_protocol::HubMode;
 use lora::driver::{Sx1262Driver, Sx1262Pins};
+use lora::traits::NullRadio;
 use tasks::{AdminReceiver, CommandReceiver, CommandSender, LedReceiver, LedSender, ADMIN_CHANNEL, LED_CHANNEL};
 
 /// Static executor for embassy
@@ -122,8 +125,8 @@ fn main() -> ! {
     // Create LoRa driver
     let lora_driver = Sx1262Driver::new(spi, lora_pins);
 
-    // Read unique device ID from eFuse MAC address (last 3 bytes). Used for the
-    // USB serial and the MQTT client id so each board is distinct.
+    // Read the eFuse MAC address: the last 3 bytes give each board a distinct
+    // USB serial and MQTT client id; all 6 derive the LoRaWAN gateway EUI.
     let mac = esp_hal::efuse::Efuse::read_base_mac_address();
     let device_id: [u8; 3] = [mac[3], mac[4], mac[5]];
     let usb_serial = format_usb_serial(USB_SERIAL.init([0u8; 10]), device_id);
@@ -199,6 +202,7 @@ fn main() -> ! {
         debug_cdc,
         lora_driver,
         led,
+        mac,
         device_id,
         config_store,
         wifi_controller,
@@ -254,6 +258,7 @@ struct Board {
     debug_cdc: CdcClass,
     lora_driver: LoraDriver,
     led: Output<'static>,
+    mac: [u8; 6],
     device_id: [u8; 3],
     config_store: Option<ConfigStore>,
     wifi_controller: esp_radio::wifi::WifiController<'static>,
@@ -269,6 +274,7 @@ async fn async_main(spawner: Spawner, board: Board) {
         debug_cdc,
         lora_driver,
         led,
+        mac,
         device_id,
         mut config_store,
         wifi_controller,
@@ -317,14 +323,28 @@ async fn async_main(spawner: Spawner, board: Board) {
     // Spawn other tasks
     debug!("Starting tasks...");
     spawner.spawn(admin_wrapper(admin_receiver)).unwrap();
-    spawner.spawn(lora_wrapper(lora_driver, command_receiver, led_sender)).unwrap();
     spawner.spawn(led_wrapper(led, led_receiver)).unwrap();
     spawner.spawn(hub_ctrl_wrapper(config_store, hub_config)).unwrap();
     spawner.spawn(net_runner_wrapper(net_runner)).unwrap();
     spawner.spawn(wifi_wrapper(wifi_controller, hub_config)).unwrap();
     spawner.spawn(net_watch_wrapper(stack)).unwrap();
-    spawner.spawn(bridge_wrapper()).unwrap();
-    spawner.spawn(mqtt_wrapper(stack, hub_config, device_id)).unwrap();
+
+    // The radio has one owner, selected by the configured mode.
+    match hub_config.mode {
+        HubMode::Bridge => {
+            debug!("Mode: LoRa <-> MQTT bridge");
+            spawner.spawn(lora_wrapper(lora_driver, command_receiver, led_sender)).unwrap();
+            spawner.spawn(bridge_wrapper()).unwrap();
+            spawner.spawn(mqtt_wrapper(stack, hub_config, device_id)).unwrap();
+        }
+        HubMode::LorawanGateway => {
+            debug!("Mode: LoRaWAN single-channel gateway");
+            spawner.spawn(gateway_wrapper(lora_driver, hub_config, led_sender)).unwrap();
+            spawner.spawn(gateway_udp_wrapper(stack, hub_config, mac)).unwrap();
+            // Host-link commands still answer; RF ones fail cleanly.
+            spawner.spawn(null_lora_wrapper(command_receiver, led_sender)).unwrap();
+        }
+    }
     debug!("All tasks started");
 }
 
@@ -414,4 +434,22 @@ async fn lora_wrapper(
     led_sender: LedSender,
 ) {
     tasks::lora_task(radio, command_receiver, led_sender).await;
+}
+
+/// Wrapper task for the LoRaWAN gateway radio side
+#[embassy_executor::task]
+async fn gateway_wrapper(radio: LoraDriver, config: &'static HubConfig, led_sender: LedSender) {
+    tasks::gateway_task(radio, config, led_sender).await;
+}
+
+/// Wrapper task for the LoRaWAN gateway UDP forwarder
+#[embassy_executor::task]
+async fn gateway_udp_wrapper(stack: Stack<'static>, config: &'static HubConfig, mac: [u8; 6]) {
+    tasks::gateway_udp_task(stack, config, mac).await;
+}
+
+/// Wrapper task keeping the command dispatcher alive in gateway mode
+#[embassy_executor::task]
+async fn null_lora_wrapper(command_receiver: CommandReceiver, led_sender: LedSender) {
+    tasks::lora_task(NullRadio, command_receiver, led_sender).await;
 }

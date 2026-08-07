@@ -4,6 +4,8 @@
 
 pub mod admin;
 pub mod bridge;
+pub mod gateway;
+pub mod gateway_udp;
 pub mod hub_ctrl;
 pub mod led;
 pub mod lora;
@@ -13,6 +15,8 @@ pub mod wifi;
 
 pub use admin::{admin_task, AdminReceiver, ADMIN_CHANNEL};
 pub use bridge::bridge_task;
+pub use gateway::gateway_task;
+pub use gateway_udp::gateway_udp_task;
 pub use hub_ctrl::hub_ctrl_task;
 pub use led::{led_task, LedReceiver, LedSender, LED_CHANNEL};
 pub use lora::lora_task;
