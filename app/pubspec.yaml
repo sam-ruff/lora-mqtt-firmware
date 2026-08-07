@@ -1,0 +1,36 @@
+name: walkie_textie_hub_config
+description: "Configurator for the Walkie-Textie hub: joins the hub's provisioning hotspot and sets WiFi, MQTT and LoRaWAN gateway settings."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Flutter Rust Bridge for the Rust engine.
+  # Pinned exactly to the rust_backend codegen version (the runtime and
+  # codegen versions must match, else RustLib.init throws).
+  flutter_rust_bridge: 2.11.1
+
+  provider: ^6.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  config:
+    # The custom rust_backend pod plus the hybrid SwiftPM path breaks the
+    # Xcode pods manifest check; stay on CocoaPods only (same as the
+    # walkie-textie app).
+    enable-swift-package-manager: false

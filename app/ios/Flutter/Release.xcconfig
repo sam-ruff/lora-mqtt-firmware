@@ -1,0 +1,16 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
+#include "Generated.xcconfig"
+
+// Force-load the Rust engine: Dart reaches it only via dlsym, so nothing
+// references the archive at link time and the linker would drop it.
+// export_dynamic keeps the loaded globals in the dyld export trie for dlsym,
+// and dead-code stripping is off so the unreferenced engine survives. The
+// archive ("install") build additionally runs a strip phase whose default
+// "all" style deletes the export trie wholesale: non-global keeps the trie
+// while still shedding local symbols. Slices are built by
+// tool/build_ios_libs.sh.
+WT_RUST_LIB[sdk=iphoneos*] = $(SRCROOT)/Frameworks/rust_backend.xcframework/ios-arm64/librust_backend.a
+WT_RUST_LIB[sdk=iphonesimulator*] = $(SRCROOT)/Frameworks/rust_backend.xcframework/ios-arm64_x86_64-simulator/librust_backend.a
+OTHER_LDFLAGS = $(inherited) -force_load "$(WT_RUST_LIB)" -Wl,-export_dynamic
+DEAD_CODE_STRIPPING = NO
+STRIP_STYLE = non-global

@@ -1,0 +1,9 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
+#include "Generated.xcconfig"
+
+// Same engine force-load as Release.xcconfig; see the comment there.
+WT_RUST_LIB[sdk=iphoneos*] = $(SRCROOT)/Frameworks/rust_backend.xcframework/ios-arm64/librust_backend.a
+WT_RUST_LIB[sdk=iphonesimulator*] = $(SRCROOT)/Frameworks/rust_backend.xcframework/ios-arm64_x86_64-simulator/librust_backend.a
+OTHER_LDFLAGS = $(inherited) -force_load "$(WT_RUST_LIB)" -Wl,-export_dynamic
+DEAD_CODE_STRIPPING = NO
+STRIP_STYLE = non-global
