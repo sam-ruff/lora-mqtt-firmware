@@ -23,6 +23,10 @@ path = "src/hub_tests.rs"
 name = "gateway-udp-tests"
 path = "src/gateway_udp_tests.rs"
 
+[[bin]]
+name = "ble-e2e-tests"
+path = "src/ble_e2e_tests.rs"
+
 [dependencies]
 # Serial port communication (usbportinfo-interface exposes the USB interface
 # number so we can tell the data CDC from the debug CDC deterministically)
@@ -45,3 +49,9 @@ colored = "2.0"
 
 # MQTT broker client for the hub bridge-mode test
 rumqttc = "0.25"
+
+# BLE communication with the node device (ble-e2e-tests)
+btleplug = "0.11"
+uuid = "1.0"
+tokio = { version = "1.0", features = ["rt-multi-thread", "time", "macros"] }
+futures = "0.3"

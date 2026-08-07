@@ -9,6 +9,7 @@ lora = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/
 duty = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin duty-cycle-tests -- --port auto"
 hub = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin hub-tests --"
 gateway = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin gateway-udp-tests --"
+ble-e2e = "run --target x86_64-unknown-linux-gnu --manifest-path integration_tests/Cargo.toml --bin ble-e2e-tests --"
 
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor"
