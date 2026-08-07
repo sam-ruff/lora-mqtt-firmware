@@ -1,441 +1,107 @@
-# Walkie-Textie Rust Firmware
+# Walkie-Textie Hub
 
-ESP32-S3 firmware with WIO-SX1262 LoRa module using Embassy async runtime. Receives COBS-encoded binary commands over serial or BLE and supports LoRa TX/RX operations.
+Firmware that turns the Walkie-Textie radio board (ESP32-S3 + Wio-SX1262) into
+a mains-powered hub. It has two operating modes, selected by configuration:
 
-The wire protocol (command/response codec and COBS framing) lives in the shared [`wt-protocol`](https://github.com/sam-ruff/walkie-textie-protocol) crate, vendored here as a git submodule and used by both this firmware and the phone app so the two cannot drift. Clone with submodules:
+- **Bridge**: receives Walkie-Textie LoRa packets and publishes them to an
+  MQTT broker over WiFi, and transmits packets published to its command topic.
+- **LoRaWAN gateway**: a single-channel Semtech UDP packet forwarder for a
+  LoRaWAN network server such as ChirpStack.
+
+Pure Rust, no C: esp-hal + esp-rtos (Embassy executor), esp-radio for WiFi,
+a hand-written SX1262 driver, embassy-net and rust-mqtt. The shared wire
+protocol lives in the [`wt-protocol`](https://github.com/sam-ruff/walkie-textie-protocol)
+submodule, so clone with `--recursive`.
+
+## Building and flashing
 
 ```bash
-git clone --recursive <repo-url>
-# or, in an existing checkout:
-git submodule update --init --recursive
-```
-
-## Building
-
-### Prerequisites
-
-Install the ESP Rust toolchain:
-
-```bash
-cargo install espup
+cargo install espup espflash
 espup install
-source ~/export-esp.sh
-```
+source "$HOME/export-esp.sh"
 
-You must run `source ~/export-esp.sh` in each new terminal session before building.
-
-### Host Tests
-
-Run unit tests on your development machine:
-
-```bash
-cargo t
-# or: cargo test --target x86_64-unknown-linux-gnu
-```
-
-### Embedded Build (ESP32-S3)
-
-Debug build:
-
-```bash
-cargo +esp build --features embedded -Zbuild-std=core,alloc
-```
-
-Release build:
-
-```bash
 cargo +esp build --features embedded --release -Zbuild-std=core,alloc
+./flash_devices.sh          # build + flash all connected boards
 ```
 
-### Flash
+After flashing, power-cycle the board (unplug and replug, do not hold BOOT).
+The ESP32-S3 native USB-Serial-JTAG cannot be reset into the application from
+the host, so the board stays in ROM download mode until power-cycled. A
+running hub enumerates as "Walkie-Textie Hub" with USB serial `WTH-XXXXXX`
+and exposes two CDC ports: data (interface 0) and debug log (interface 2).
+
+## Configuration
+
+Defaults can be baked at build time through environment variables, all
+optional: `HUB_WIFI_SSID`, `HUB_WIFI_PASSWORD`, `HUB_MQTT_HOST`,
+`HUB_MQTT_PORT`, `HUB_MQTT_CLIENT_ID`, `HUB_MODE` (`bridge` or `gateway`),
+`HUB_GW_HOST`, `HUB_GW_PORT`.
+
+Runtime provisioning happens over the USB data port with hub commands layered
+on the Walkie-Textie wire protocol (COBS-framed, CRC-16, see `hub-protocol/`):
+set WiFi credentials, MQTT broker, gateway settings and mode; read back the
+configuration (the WiFi password is never echoed) and live status (link
+states, IP, counters, uptime). Settings persist in the `nvs` flash partition
+and apply on the next boot, so the flow is set, then reboot.
+
+## Bridge mode
+
+Topics live under `wt/hub/<id>/` where `<id>` is the hex device id from the
+USB serial:
+
+- `rx`: received LoRa packets, JSON with `payload_hex`, `rssi`, `snr`, `seq`
+  and `uptime_ms`.
+- `tx`: publish `{"payload_hex":"...","id":123}` here to transmit over LoRa;
+  `id` is optional and echoed back.
+- `tx/result`: `{"result":"sent"|"refused"|"error"...}` per downlink, with
+  `retry_after_secs` when the EU duty cycle budget refuses a transmission.
+- `status`: retained `{"online":true,...}`, with an offline last-will.
+
+The broker connection is plain TCP (local broker assumed); the client id
+defaults to `wt-hub-<id>`.
+
+## LoRaWAN gateway mode
+
+Speaks the Semtech UDP packet-forwarder protocol to a network server -
+typically the ChirpStack gateway bridge on port 1700. The gateway EUI derives
+from the MAC address with the standard FFFE insertion.
+
+An SX1262 is a single-channel, half-duplex radio, which makes this a
+single-channel gateway with real limitations:
+
+- Only uplinks on the configured frequency and spreading factor are heard
+  (default 868.1 MHz, SF7BW125). OTAA joins hop across three channels, so
+  pin devices to the gateway channel and disable ADR in the device profile.
+- The radio is deaf while transmitting a downlink.
+- The Things Network discourages single-channel gateways; use a self-hosted
+  ChirpStack.
+
+Downlinks obey the EU duty cycle per sub-band and are refused with a
+`DUTY_CYCLE_OVERFLOW` TX_ACK when the hourly budget is spent. The gateway is
+payload-agnostic: joins, MICs and encryption all happen at the network server.
+
+## Testing
+
+Host tests need no hardware:
 
 ```bash
-espflash flash --port /dev/ttyACM0 target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware
+cargo test --features host-test --target x86_64-unknown-linux-gnu
+cargo test --manifest-path hub-protocol/Cargo.toml --target x86_64-unknown-linux-gnu
+cargo test --manifest-path vendor/wt-protocol/Cargo.toml --target x86_64-unknown-linux-gnu
 ```
 
-Or use cargo run (configured in `.cargo/config.toml`):
+Hardware tests run from `integration_tests/` against flashed boards:
 
 ```bash
-cargo +esp run --features embedded --release -Zbuild-std=core,alloc
+cargo integration     # serial host-link, one board
+cargo lora            # two boards over the air
+cargo duty            # duty cycle lockout (spends ~6 min of airtime)
+cargo hub -- --wifi-ssid <ssid> --wifi-password <pw> --broker-host <ip>
+cargo gateway -- --server-host <this machine's LAN IP>
 ```
 
-To flash multiple devices at once:
-
-```bash
-./flash_devices.sh                           # Auto-detect and flash all
-./flash_devices.sh /dev/ttyACM0 /dev/ttyACM2 # Flash specific ports
-```
-
-**If flashing fails**, put the device in bootloader mode:
-1. Hold the **BOOT** button
-2. Press and release **RESET**
-3. Release **BOOT** button
-4. Run the flash command again
-
-**After flashing**, unplug and replug the USB cable. Verify the device is running by checking that two serial ports appear:
-
-```bash
-ls /dev | grep ACM
-# Should show: ttyACM0 ttyACM1 (for one device)
-# Or: ttyACM0 ttyACM1 ttyACM2 ttyACM3 (for two devices)
-```
-
-### Monitor
-
-The firmware exposes two USB CDC-ACM serial ports:
-- **CDC0** (e.g. `/dev/ttyACM0`): Data port for commands/responses
-- **CDC1** (e.g. `/dev/ttyACM1`): Debug log output
-
-To monitor the debug output after flashing:
-
-```bash
-# Open debug port (second ttyACM device)
-picocom /dev/ttyACM1 -b 115200
-```
-
-Debug output includes startup messages and LoRa/BLE events:
-```
-Walkie-Textie v0.1.0 starting...
-Device ID: A1B2C3
-Starting tasks...
-LoRa: Initialising radio...
-LoRa: Radio initialised
-BLE: Starting as 'WalkieTextie-A1B2C3'
-BLE: Advertising...
-All tasks started
-LoRa TX: 'Hello World'
-LoRa TX: Complete
-LoRa RX: 'Reply' (RSSI: -45, SNR: 8)
-BLE: Connected
-BLE: Disconnected
-```
-
-To monitor both ports simultaneously, use two terminals or a tool like `tmux`:
-```bash
-# Terminal 1: Data port (for sending commands)
-picocom /dev/ttyACM0 -b 115200
-# Terminal 2: Debug port (for viewing logs)
-picocom /dev/ttyACM1 -b 115200
-# For a second device
-picocom /dev/ttyACM3 -b 115200
-```
-
-## Bootloader
-
-This firmware uses the ESP-IDF 2nd stage bootloader. The bootloader is pre-flashed on most ESP32-S3 development boards.
-
-### Flashing the Bootloader from Scratch
-
-If you need to flash the bootloader (e.g., on a new chip or after corruption):
-
-1. Install espflash:
-   ```bash
-   cargo install espflash
-   ```
-
-2. Download the ESP-IDF bootloader binary for ESP32-S3 from the espflash releases or build from ESP-IDF.
-
-3. Flash the bootloader and partition table:
-   ```bash
-   espflash write-bin 0x0 bootloader.bin --port /dev/ttyACM0
-   espflash write-bin 0x8000 partition-table.bin --port /dev/ttyACM0
-   ```
-
-Alternatively, espflash can flash a complete image including bootloader:
-```bash
-espflash flash --port /dev/ttyACM0 --bootloader bootloader.bin --partition-table partition-table.bin target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware
-```
-
-### Building a Silent Bootloader
-
-By default, the ESP-IDF bootloader outputs log messages on boot. To disable this, build a custom bootloader with logging disabled using the project in `bootloader/`:
-
-1. Install ESP-IDF (v5.2 or later):
-   ```bash
-   mkdir -p ~/esp
-   cd ~/esp
-   git clone -b v5.2.2 --recursive https://github.com/espressif/esp-idf.git
-   cd esp-idf
-   ./install.sh esp32s3
-   ```
-
-2. Build the silent bootloader:
-   ```bash
-   source ~/esp/esp-idf/export.sh
-   cd bootloader
-   idf.py set-target esp32s3
-   idf.py build
-   cp build/bootloader/bootloader.bin ../silent-bootloader-esp32s3.bin
-   ```
-
-3. Flash with the silent bootloader:
-   ```bash
-   espflash flash --port /dev/ttyACM0 \
-       --bootloader silent-bootloader-esp32s3.bin \
-       target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware
-   ```
-
-### Notes on ESP-IDF Bootloader Compatibility
-
-The firmware includes an app descriptor (`esp_app_desc!` macro) required by the ESP-IDF bootloader for validation. The efuse block revision fields are set to accept all chip revisions (min=0, max=65535).
-
-## Integration Tests
-
-After flashing the firmware, run integration tests to verify functionality. Cargo aliases are provided for convenience and auto-detect data ports by default:
-
-| Alias               | Description                |
-|---------------------|----------------------------|
-| `cargo integration` | Single-device serial tests |
-| `cargo lora`        | Two-device LoRa tests      |
-| `cargo ble-serial`  | BLE tests via serial       |
-| `cargo ble-ble`     | BLE-to-BLE tests           |
-
-Port auto-detection scans ttyACM devices and identifies the data port (CDC0) by sending a GetVersion command.
-
-### Single-Device Tests
-
-Tests basic command/response functionality:
-
-```bash
-# Auto-detect port (default)
-cargo integration
-
-# Or specify port manually
-cargo integration --port /dev/ttyACM0
-```
-
-Options:
-- `--port <PORT>`: Serial port (default: auto)
-- `--baud <RATE>`: Baud rate (default: 115200)
-
-The tests verify:
-- GetVersion returns firmware version
-- Invalid command returns error
-- Multiple sequential commands work correctly
-
-### Two-Device LoRa Tests
-
-Tests bidirectional LoRa communication between two flashed devices:
-
-```bash
-# Auto-detect both ports (default)
-cargo lora
-
-# Or specify ports manually
-cargo lora --port-a /dev/ttyACM0 --port-b /dev/ttyACM2
-```
-
-Options:
-- `--port-a <PORT>`: Serial port for device A (default: auto)
-- `--port-b <PORT>`: Serial port for device B (default: auto)
-- `--baud <RATE>`: Baud rate (default: 115200)
-
-The tests verify:
-- A to B transmission
-- B to A transmission
-- Bidirectional ping-pong
-- Multiple sequential messages
-- Reliability (10 round trips)
-
-## Hardware Configuration
-
-| Pin    | Function         |
-|--------|------------------|
-| GPIO7  | SPI SCLK         |
-| GPIO8  | SPI MISO         |
-| GPIO9  | SPI MOSI         |
-| GPIO41 | LoRa NSS (CS)    |
-| GPIO39 | LoRa DIO1 (IRQ)  |
-| GPIO42 | LoRa NRST        |
-| GPIO40 | LoRa BUSY        |
-| GPIO48 | LED (active low) |
-
-TCXO voltage: 1.8V (configured via DIO3)
-
-## Command Protocol
-
-Binary protocol with COBS encoding and zero byte delimiter:
-
-```
-[COBS-encoded payload][0x00]
-
-Payload: [version: u8][cmd_id: u8][length: u16 LE][data][crc16: u16 LE]
-```
-
-Protocol version is currently `1`. The firmware will reject commands with mismatched versions.
-
-### Commands
-
-| ID   | Command            | Payload              | Response    | Description                        |
-|------|--------------------|----------------------|-------------|------------------------------------|
-| 0x01 | GetVersion         | None                 | Version     | Returns firmware version           |
-| 0x03 | Reboot             | None                 | None        | Reboots the device (no response)   |
-| 0x10 | LoraTx             | Data bytes (max 256) | TxComplete  | Transmits data over LoRa           |
-| 0x11 | SetSpreadingFactor | sf (u8, 7-12)        | RadioConfig | Sets the LoRa spreading factor     |
-| 0x12 | GetRadioConfig     | None                 | RadioConfig | Reads the active radio config      |
-
-### Responses
-
-| ID   | Response    | Payload                                                             | Description                              |
-|------|-------------|---------------------------------------------------------------------|------------------------------------------|
-| 0x01 | Version     | major, minor, patch (3 bytes)                                       | Firmware version response                |
-| 0x10 | TxComplete  | None                                                                | LoRa transmission completed successfully |
-| 0x11 | RxPacket    | data, rssi (i16 LE), snr (i8)                                       | Received LoRa packet (unsolicited)       |
-| 0x12 | RadioConfig | freq_hz (u32 LE), sf (u8), bw_khz (u32 LE), cr (u8), tx_power (i8)  | Active radio configuration (11 bytes)    |
-| 0x13 | TxRefused   | retry_after_secs (u32 LE)                                           | TX refused by the duty cycle limiter     |
-| 0xFF | Error       | status code, original command ID                                    | Error response with status and cmd ID    |
-
-### Response Format
-
-Responses use the same frame structure as commands:
-
-```
-Payload: [version: u8][resp_id: u8][length: u16 LE][data][crc16: u16 LE]
-```
-
-### Unsolicited Responses
-
-The firmware continuously listens for incoming LoRa packets in the background (100ms polling interval). When a packet is received, it is immediately pushed to the host as an unsolicited `RxPacket` response.
-
-- Response ID: `0x11`
-- Sequence ID: `0` (distinguishes unsolicited from request/response pairs)
-- Payload: `[data bytes][rssi: i16 LE][snr: i8]`
-- Max TX latency: 100ms (radio must exit RX mode to transmit)
-
-The host must be ready to receive these at any time.
-
-### Response Status Codes
-
-| Code | Status           | Description                                        |
-|------|------------------|----------------------------------------------------|
-| 0x00 | Success          | Command executed successfully                      |
-| 0x01 | InvalidCommand   | Unknown command ID                                 |
-| 0x02 | InvalidLength    | Payload length invalid for command                 |
-| 0x03 | CrcError         | CRC-16 checksum mismatch                           |
-| 0x04 | InvalidVersion   | Protocol version mismatch                          |
-| 0x05 | InvalidParameter | Parameter out of range (e.g. SF outside 7-12)      |
-| 0x10 | LoraError        | LoRa radio error during operation                  |
-| 0x11 | Timeout          | Operation timed out                                |
-
-### Radio Configuration and Duty Cycle
-
-The radio boots at 869.525 MHz, spreading factor 11, 250 kHz bandwidth, coding
-rate 4/8 and +22 dBm. The spreading factor can be changed at runtime with
-`SetSpreadingFactor` (7-12); it is not persisted and reverts to SF11 on reboot.
-Both radios in a link must use the same spreading factor.
-
-Transmissions are checked against the EU duty cycle rules (ERC 70-03) for the
-sub-band containing the configured frequency; 869.4-869.65 MHz allows 10%
-airtime per sliding hour (360 s). Spent airtime is tracked with the Semtech
-time-on-air formula, and a `LoraTx` that would exceed the remaining budget is
-refused without transmitting: the firmware replies `TxRefused` with the number
-of seconds until enough budget frees up (`0xFFFFFFFF` if the packet exceeds the
-entire hourly budget). At SF11 a full 255-byte packet costs about 3.25 s of
-airtime, so roughly 110 of them fit in an hour; lower spreading factors are far
-cheaper.
-
-### Example Frames
-
-All examples show the complete COBS-encoded frame including the zero delimiter.
-
-**GetVersion Command:**
-```
-Raw:    01 01 00 00 84 41       (version=1, cmd=0x01, len=0, crc=0x4184)
-COBS:   03 01 01 01 03 84 41 00
-```
-
-**GetVersion Response (v0.1.0):**
-```
-Raw:    01 01 03 00 00 01 00 22 20    (version=1, resp=0x01, len=3, payload=[0,1,0], crc=0x2022)
-COBS:   04 01 01 03 01 02 01 03 22 20 00
-```
-
-**Reboot Command:**
-```
-Raw:    01 03 00 00 e4 2f       (version=1, cmd=0x03, len=0, crc=0x2fe4)
-COBS:   03 01 03 01 03 e4 2f 00
-```
-
-**LoraTx Command ("Hello"):**
-```
-Raw:    01 10 05 00 48 65 6c 6c 6f e6 64    (crc=0x64e6)
-COBS:   04 01 10 05 08 48 65 6c 6c 6f e6 64 00
-```
-
-**Error Response (InvalidCommand for cmd 0xFE):**
-```
-Raw:    01 ff 02 00 01 fe 87 cf    (status=0x01, original_cmd=0xFE, crc=0xcf87)
-COBS:   04 01 ff 02 05 01 fe 87 cf 00
-```
-
-### CRC-16 Calculation
-
-The CRC-16 uses the XMODEM polynomial (0x1021) with initial value 0x0000. The CRC is calculated over the bytes: `[version][cmd_id][length_lo][length_hi][payload...]`.
-
-Python example:
-```python
-import crcmod
-crc16 = crcmod.predefined.mkCrcFun('xmodem')
-checksum = crc16(bytes([0x01, 0x01, 0x00, 0x00]))  # GetVersion: 0x4184
-```
-
-### COBS Encoding
-
-COBS (Consistent Overhead Byte Stuffing) encodes data to eliminate zero bytes, using 0x00 as frame delimiter. The firmware uses the `corncobs` implementation which appends the zero delimiter automatically.
-
-Python example:
-```python
-from cobs import cobs
-raw_frame = bytes([0x01, 0x01, 0x00, 0x00, 0x84, 0x41])
-encoded = cobs.encode(raw_frame) + b'\x00'  # Add delimiter
-```
-
-## Bluetooth LE
-
-The firmware advertises as "WalkieTextie" and provides a Nordic UART Service (NUS) for command/response communication alongside serial.
-
-### Nordic UART Service UUIDs
-
-| Characteristic | UUID                                 |
-|----------------|--------------------------------------|
-| Service        | 6E400001-B5A3-F393-E0A9-E50E24DCCA9E |
-| RX (write)     | 6E400002-B5A3-F393-E0A9-E50E24DCCA9E |
-| TX (notify)    | 6E400003-B5A3-F393-E0A9-E50E24DCCA9E |
-
-### Usage
-
-1. Scan for and connect to "WalkieTextie"
-2. Enable notifications on the TX characteristic
-3. Write COBS-encoded commands to the RX characteristic
-4. Receive COBS-encoded responses via TX notifications
-
-The same binary protocol is used over BLE as over serial. Commands sent via BLE receive responses via BLE; unsolicited LoRa RX packets are only sent to serial.
-
-Compatible apps: nRF Connect, any app supporting NUS.
-
-## Architecture
-
-The firmware uses esp-rtos with Embassy async tasks and channel-based communication:
-
-- **Serial Reader Task**: Reads USB serial, parses COBS frames, sends commands to channel
-- **Serial Writer Task**: Receives responses from channel, encodes and writes to USB serial
-- **LoRa Task**: Continuously listens for LoRa packets (100ms polling), pushes received packets immediately to serial. Processes TX commands when available with max 100ms latency.
-- **LED Task**: Flashes LED on TX/RX events via channel (non-blocking)
-- **BLE Host Task**: Manages BLE advertising, connections, and Nordic UART Service. Routes commands to the same channel as serial.
-
-Traits (`LoraRadio`, `SerialPort`) allow unit testing with mock implementations.
-
-## CI/CD
-
-GitHub Actions runs on every push to `main`:
-
-1. **Test**: Runs unit tests (`cargo test`)
-2. **Build**: Builds release firmware using ESP toolchain
-3. **Release**: Creates GitHub releases via semantic-release
-
-Releases are triggered by conventional commit messages:
-- `feat: ...` - minor version bump
-- `fix: ...` - patch version bump
-- `feat!: ...` or `BREAKING CHANGE:` - major version bump
-
-The firmware binary is attached to each GitHub release.
+`cargo hub` needs a hub board, a node board and a reachable MQTT broker; it
+provisions the hub, then proves both bridge directions end to end.
+`cargo gateway` binds the network-server side itself and verifies the
+forwarder protocol against the live gateway. Watch the debug CDC port
+(115200 baud) for the firmware's own view of events.
