@@ -1,0 +1,6 @@
+rust_input: crate::frb_api
+rust_root: rust_backend/
+rust_output: rust_backend/src/frb_generated.rs
+dart_output: lib/src/rust
+dart_format_line_length: 120
+dump: []

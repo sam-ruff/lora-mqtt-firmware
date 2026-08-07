@@ -90,6 +90,23 @@ Downlinks obey the EU duty cycle per sub-band and are refused with a
 `DUTY_CYCLE_OVERFLOW` TX_ACK when the hourly budget is spent. The gateway is
 payload-agnostic: joins, MICs and encryption all happen at the network server.
 
+## Configurator app
+
+`app/` holds a Flutter app for phones that drives the same provisioning API
+as the captive portal: join the hub's hotspot, open the app, connect and set
+everything up. The HTTP client and validation live in a Rust engine
+(`app/rust_backend/`) exposed through flutter_rust_bridge, mirroring the
+Walkie-Textie messenger app's architecture: `./build_rust.sh` regenerates the
+bindings and builds the engine, Android cross-compiles it via cargo-ndk from
+Gradle, and iOS links a static xcframework built by `tool/build_ios_libs.sh`.
+
+```bash
+cd app
+./build_rust.sh
+flutter run --dart-define=MOCK=true    # full flow against a fake hub, no hardware
+flutter run                            # against a real hub
+```
+
 ## Testing
 
 Host tests need no hardware:
