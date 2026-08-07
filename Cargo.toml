@@ -66,6 +66,7 @@ embedded-storage-async = { version = "0.4.1", optional = true }
 embassy-net = { version = "0.8.0", features = ["tcp", "udp", "dhcpv4", "dns", "medium-ethernet", "proto-ipv4"], optional = true }
 rust-mqtt = { version = "0.5.1", default-features = false, optional = true, features = ["alloc", "v5"] }
 serde-json-core = "0.6.0"
+base64 = { version = "0.23.1", default-features = false }
 
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["executor"] }

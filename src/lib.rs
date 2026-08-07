@@ -20,6 +20,13 @@ pub mod net;
 // embassy channels are embedded-gated.
 pub mod bridge;
 
+// The LoRaWAN gateway core (Semtech UDP codec, forwarder policy, downlink
+// scheduler) is pure and host-tested; its embassy channels are embedded-gated
+// and the DownlinkJob type needs the radio config, so the module follows the
+// lora module's gating.
+#[cfg(any(feature = "embedded", feature = "host-test"))]
+pub mod gateway;
+
 // These modules depend on embassy/async features only available with embedded feature
 #[cfg(feature = "embedded")]
 pub mod debug;

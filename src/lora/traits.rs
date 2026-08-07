@@ -35,7 +35,6 @@ pub enum SyncWord {
     #[default]
     Private,
     /// Public networks / LoRaWAN (register value 0x3444).
-    #[allow(dead_code)] // constructed by the gateway mode
     Public,
 }
 
@@ -50,7 +49,7 @@ impl SyncWord {
 }
 
 /// Configuration for LoRa modulation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoraConfig {
     /// Centre frequency in Hz
     pub frequency_hz: u32,
@@ -145,6 +144,44 @@ pub trait LoraRadio {
     /// Set the radio to standby mode
     #[allow(dead_code)]
     fn set_standby(&mut self) -> impl Future<Output = Result<(), LoraError>>;
+}
+
+/// Stand-in radio for modes where the real SX1262 is owned by another task
+/// (the LoRaWAN gateway). Keeps the command dispatcher alive so GetVersion
+/// and config queries still answer over serial; anything touching RF fails
+/// cleanly.
+pub struct NullRadio;
+
+impl LoraRadio for NullRadio {
+    async fn init(&mut self) -> Result<(), LoraError> {
+        Ok(())
+    }
+
+    async fn transmit(&mut self, _data: &[u8]) -> Result<(), LoraError> {
+        Err(LoraError::NotInitialised)
+    }
+
+    async fn arm_receive(&mut self) -> Result<(), LoraError> {
+        Ok(())
+    }
+
+    async fn wait_rx_event(&mut self, timeout_ms: u32) -> Result<embassy_time::Instant, LoraError> {
+        // Wait out the full timeout so the polling loop never busy-spins.
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(timeout_ms as u64)).await;
+        Err(LoraError::Timeout)
+    }
+
+    async fn read_packet(&mut self) -> Result<RxPacket, LoraError> {
+        Err(LoraError::ReceiveFailed)
+    }
+
+    async fn configure(&mut self, _config: &LoraConfig) -> Result<(), LoraError> {
+        Err(LoraError::NotInitialised)
+    }
+
+    async fn set_standby(&mut self) -> Result<(), LoraError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
