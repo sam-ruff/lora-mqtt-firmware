@@ -27,6 +27,10 @@ path = "src/gateway_udp_tests.rs"
 name = "ble-e2e-tests"
 path = "src/ble_e2e_tests.rs"
 
+[[bin]]
+name = "hub-status"
+path = "src/hub_status.rs"
+
 [dependencies]
 # Serial port communication (usbportinfo-interface exposes the USB interface
 # number so we can tell the data CDC from the debug CDC deterministically)
