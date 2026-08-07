@@ -29,6 +29,13 @@ The ESP32-S3 native USB-Serial-JTAG cannot be reset into the application from
 the host, so the board stays in ROM download mode until power-cycled. A
 running hub enumerates as "LoRaMqttHub" with USB serial `LMH-XXXXXX`
 and exposes two CDC ports: data (interface 0) and debug log (interface 2).
+The running app owns the USB port, so reflashing needs the board back in
+bootloader mode first (hold BOOT while plugging in).
+
+espflash reads `espflash.toml` from the working directory. If it names a
+bootloader binary that does not exist, flashing fails with a misleading
+"Error while connecting to device" - the file ships with the override
+commented out and the stock espflash bootloader is used.
 
 ## Configuration
 

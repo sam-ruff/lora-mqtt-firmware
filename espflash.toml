@@ -1,2 +1,9 @@
-[idf_format_args]
-bootloader = "bootloader/build/bootloader/bootloader.bin"
+# espflash uses its bundled second-stage bootloader. To use the silent
+# bootloader instead, build it first (see bootloader/README.md) and add:
+#
+#   [idf_format_args]
+#   bootloader = "bootloader/build/bootloader/bootloader.bin"
+#
+# Never point this at a file that does not exist: espflash fails with a
+# misleading "Error while connecting to device" rather than a missing-file
+# error.
