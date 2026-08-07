@@ -64,6 +64,8 @@ embassy-embedded-hal = { version = "0.5.0", default-features = false, optional =
 embedded-storage = { version = "0.3.1", optional = true }
 embedded-storage-async = { version = "0.4.1", optional = true }
 embassy-net = { version = "0.8.0", features = ["tcp", "udp", "dhcpv4", "dns", "medium-ethernet", "proto-ipv4"], optional = true }
+rust-mqtt = { version = "0.5.1", default-features = false, optional = true, features = ["alloc", "v5"] }
+serde-json-core = "0.6.0"
 
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["executor"] }
@@ -114,4 +116,5 @@ embedded = [
     "dep:embedded-storage",
     "dep:embedded-storage-async",
     "dep:embassy-net",
+    "dep:rust-mqtt",
 ]

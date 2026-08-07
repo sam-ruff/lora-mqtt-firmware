@@ -33,6 +33,7 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_hal::Async;
 use static_cell::StaticCell;
 
+mod bridge;
 mod config;
 mod debug;
 mod dispatcher;
@@ -322,7 +323,21 @@ async fn async_main(spawner: Spawner, board: Board) {
     spawner.spawn(net_runner_wrapper(net_runner)).unwrap();
     spawner.spawn(wifi_wrapper(wifi_controller, hub_config)).unwrap();
     spawner.spawn(net_watch_wrapper(stack)).unwrap();
+    spawner.spawn(bridge_wrapper()).unwrap();
+    spawner.spawn(mqtt_wrapper(stack, hub_config, device_id)).unwrap();
     debug!("All tasks started");
+}
+
+/// Wrapper task for the LoRa <-> MQTT bridge
+#[embassy_executor::task]
+async fn bridge_wrapper() {
+    tasks::bridge_task().await;
+}
+
+/// Wrapper task for the MQTT client
+#[embassy_executor::task]
+async fn mqtt_wrapper(stack: Stack<'static>, config: &'static HubConfig, device_id: [u8; 3]) {
+    tasks::mqtt_task(stack, config, device_id).await;
 }
 
 /// Wrapper task for hub provisioning/status commands

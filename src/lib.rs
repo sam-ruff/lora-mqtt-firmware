@@ -13,8 +13,12 @@ pub mod lora;
 // host-tested; only the flash store inside it is embedded-gated.
 pub mod hub_config;
 
-// Network-side helpers (stats atomics) are dependency-free and host-tested.
+// Network-side helpers (stats atomics, backoff, MQTT seam) are host-tested.
 pub mod net;
+
+// The LoRa <-> MQTT bridge state machine is pure and host-tested; only its
+// embassy channels are embedded-gated.
+pub mod bridge;
 
 // These modules depend on embassy/async features only available with embedded feature
 #[cfg(feature = "embedded")]

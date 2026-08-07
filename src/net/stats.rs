@@ -26,8 +26,6 @@ impl Default for HubStats {
     }
 }
 
-// The setters are consumed by the wifi/mqtt/bridge tasks.
-#[allow(dead_code)]
 impl HubStats {
     pub const fn new() -> Self {
         Self {
