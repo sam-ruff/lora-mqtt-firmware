@@ -9,13 +9,19 @@ use embassy_sync::channel::{Receiver, Sender};
 use embedded_io_async::{Read, Write};
 
 use crate::config;
-use crate::dispatcher::{CommandEnvelope, CommandSource, ResponseMessage, RESPONSE_CHANNEL};
+use crate::dispatcher::{
+    CommandEnvelope, CommandSource, HubCommandEnvelope, ResponseMessage, HUB_CHANNEL,
+    RESPONSE_CHANNEL,
+};
+use hub_protocol::HubCommand;
 use wt_protocol::{Command, FrameAccumulator, Response, ResponseStatus};
 
 /// Result of attempting to parse a frame
 enum ReadResult {
     /// Successfully parsed a command
     Command(Command),
+    /// Successfully parsed a hub provisioning/status command
+    HubCommand(HubCommand),
     /// Parse error (should send error response)
     ParseError(ResponseStatus, u8),
 }
@@ -61,6 +67,16 @@ pub async fn serial_reader_task<R: Read>(
                                 };
                                 command_sender.send(envelope).await;
                             }
+                            Some(ReadResult::HubCommand(cmd)) => {
+                                let envelope = HubCommandEnvelope {
+                                    command: cmd,
+                                    source: CommandSource::Serial,
+                                    sequence_id: seq_id,
+                                };
+                                if HUB_CHANNEL.try_send(envelope).is_err() {
+                                    crate::debug!("Serial: hub command queue full");
+                                }
+                            }
                             Some(ReadResult::ParseError(status, cmd_id)) => {
                                 let response = Response::error_raw(status, cmd_id);
                                 let msg = ResponseMessage::Command {
@@ -86,6 +102,9 @@ pub async fn serial_reader_task<R: Read>(
 }
 
 /// Process a complete COBS frame (delimiter included).
+///
+/// Two-stage parse: stock wt-protocol commands first; on an unknown id the
+/// hub command block (0x20..=0x2F) is tried before reporting an error.
 fn process_frame(
     frame: heapless::Vec<u8, { config::protocol::MAX_FRAME_SIZE }>,
 ) -> Option<ReadResult> {
@@ -103,6 +122,10 @@ fn process_frame(
 
     match wt_protocol::parse_command(&decoded) {
         Ok(cmd) => Some(ReadResult::Command(cmd)),
+        Err(ResponseStatus::InvalidCommand) => match hub_protocol::parse_command(&decoded) {
+            Ok(cmd) => Some(ReadResult::HubCommand(cmd)),
+            Err(status) => Some(ReadResult::ParseError(status, command_id)),
+        },
         Err(status) => Some(ReadResult::ParseError(status, command_id)),
     }
 }
@@ -138,6 +161,13 @@ pub async fn serial_writer_task<W: Write>(mut writer: W) {
             ResponseMessage::Unsolicited(response) => {
                 // Always process unsolicited packets
                 Some(response)
+            }
+            ResponseMessage::HubRaw { source, frame } => {
+                // Pre-encoded hub-protocol frame; write it verbatim
+                if source == CommandSource::Serial {
+                    let _ = writer.write_all(&frame).await;
+                }
+                None
             }
         };
 

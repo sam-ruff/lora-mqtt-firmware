@@ -40,12 +40,22 @@ pub struct CommandEnvelope {
     pub sequence_id: u16,
 }
 
+/// Envelope wrapping a hub provisioning/status command with metadata
+#[derive(Debug, Clone)]
+pub struct HubCommandEnvelope {
+    pub command: hub_protocol::HubCommand,
+    pub source: CommandSource,
+    #[allow(dead_code)]
+    pub sequence_id: u16,
+}
+
 /// Message type for all outgoing responses
 ///
 /// Subscribers filter based on message type:
 /// - Command responses: filtered by source (only the originating interface receives it)
 /// - Unsolicited: delivered to all connected interfaces
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // Boxing not available in embassy channels
 pub enum ResponseMessage {
     /// Command response - should be filtered by source
     Command {
@@ -56,6 +66,12 @@ pub enum ResponseMessage {
     },
     /// Unsolicited packet (RxPacket) - delivered to all connected interfaces
     Unsolicited(Response),
+    /// Pre-encoded hub-protocol frame - written verbatim by the transport
+    /// matching `source` (the hub control task does its own encoding)
+    HubRaw {
+        source: CommandSource,
+        frame: heapless::Vec<u8, { wt_protocol::MAX_FRAME_SIZE }>,
+    },
 }
 
 /// Global channel for commands from all sources
@@ -77,6 +93,12 @@ pub static COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, CommandEnvelope, CO
 #[cfg(feature = "embedded")]
 pub static RESPONSE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ResponseMessage, 8, 2, 1> =
     PubSubChannel::new();
+
+/// Channel for hub provisioning/status commands (serial reader -> hub control
+/// task), kept separate from the radio command path so a slow flash write
+/// never delays LoRa dispatch.
+#[cfg(feature = "embedded")]
+pub static HUB_CHANNEL: Channel<CriticalSectionRawMutex, HubCommandEnvelope, 4> = Channel::new();
 
 /// Immediate publisher for `RESPONSE_CHANNEL` (the LoRa task broadcasts here).
 #[cfg(feature = "embedded")]
