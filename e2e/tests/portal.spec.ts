@@ -53,15 +53,23 @@ test('status API reports link states and counters', async ({ request }) => {
 });
 
 test('invalid config posts are rejected', async ({ request }) => {
+  // Valid JSON with an out-of-range value fails firmware validation (422).
   const bad = await request.post('/api/config', {
     data: { gw_sf: 42, wifi_ssid: 'x' },
   });
-  expect(bad.status()).toBe(400);
+  expect(bad.status()).toBe(422);
   const body = await bad.json();
   expect(body.ok).toBe(false);
 
+  // Nothing to change and malformed JSON are both bad requests (400).
   const empty = await request.post('/api/config', { data: {} });
   expect(empty.status()).toBe(400);
+
+  const malformed = await request.post('/api/config', {
+    headers: { 'Content-Type': 'application/json' },
+    data: 'not json at all',
+  });
+  expect(malformed.status()).toBe(400);
 });
 
 test('unknown paths redirect to the portal (captive portal)', async ({ request }) => {

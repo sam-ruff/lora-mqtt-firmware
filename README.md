@@ -132,3 +132,13 @@ provisions the hub, then proves both bridge directions end to end.
 `cargo gateway` binds the network-server side itself and verifies the
 forwarder protocol against the live gateway. Watch the debug CDC port
 (115200 baud) for the firmware's own view of events.
+
+For a Bluetooth-only node, `cargo ble-e2e` exchanges real messages across
+the whole chain (BLE to the node, LoRa over the air, hub, MQTT broker) in
+both directions, with a soak loop and failure-path checks. `cargo
+hub-status` prints the hub's live state over serial, and `--clear` factory
+resets it back to the provisioning hotspot.
+
+The browser-driven portal tests live in `e2e/`: `run_e2e.sh` joins the
+hub's hotspot with nmcli, runs the Playwright suite on desktop and mobile
+viewports, provisions the hub through the real UI and rejoins your network.

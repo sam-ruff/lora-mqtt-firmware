@@ -65,8 +65,9 @@ static HUB_CONFIG: StaticCell<HubConfig> = StaticCell::new();
 /// Socket storage for the embassy-net stack: MQTT TCP + DNS + DHCP + spare
 static STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
 
-/// Socket storage for the SoftAP provisioning stack: DHCP + DNS + HTTP + spare
-static AP_STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
+/// Socket storage for the SoftAP provisioning stack: DHCP + DNS + the HTTP
+/// handler pool + spare
+static AP_STACK_RESOURCES: StaticCell<StackResources<6>> = StaticCell::new();
 
 // USB static buffers (must be 'static for embassy-usb)
 static EP_OUT_BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
@@ -357,7 +358,10 @@ async fn async_main(spawner: Spawner, board: Board) {
     spawner.spawn(net_watch_wrapper(stack)).unwrap();
     spawner.spawn(portal_dhcp_wrapper(ap_stack)).unwrap();
     spawner.spawn(portal_dns_wrapper(ap_stack)).unwrap();
-    spawner.spawn(portal_http_wrapper(ap_stack, hub_config)).unwrap();
+    // A pool of HTTP handlers: browsers open parallel connections.
+    for _ in 0..3 {
+        spawner.spawn(portal_http_wrapper(ap_stack, hub_config)).unwrap();
+    }
 
     // The radio has one owner, selected by the configured mode.
     match hub_config.mode {
@@ -429,7 +433,7 @@ async fn portal_dns_wrapper(stack: Stack<'static>) {
     tasks::portal_dns_task(stack).await;
 }
 
-#[embassy_executor::task]
+#[embassy_executor::task(pool_size = 3)]
 async fn portal_http_wrapper(stack: Stack<'static>, config: &'static HubConfig) {
     tasks::portal_http_task(stack, config).await;
 }

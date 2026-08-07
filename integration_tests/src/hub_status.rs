@@ -17,6 +17,10 @@ use protocol::{parse_hub_status, HubCommandId, ResponseId};
 struct Args {
     #[arg(long, default_value = "auto")]
     hub_port: String,
+    /// Erase the stored network config and reboot (back to the provisioning
+    /// hotspot)
+    #[arg(long)]
+    clear: bool,
 }
 
 fn main() -> Result<()> {
@@ -51,5 +55,11 @@ fn main() -> Result<()> {
 
     let network = hub.send_hub_command(HubCommandId::GetNetworkConfig, &[])?;
     println!("network config payload: {:02x?}", network.payload);
+
+    if args.clear {
+        hub.expect_config_ack(HubCommandId::ClearNetworkConfig, &[])?;
+        hub.reboot()?;
+        println!("config cleared, hub rebooting into the provisioning hotspot");
+    }
     Ok(())
 }
