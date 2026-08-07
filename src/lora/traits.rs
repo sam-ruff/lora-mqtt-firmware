@@ -28,6 +28,27 @@ pub enum LoraError {
     NotInitialised,
 }
 
+/// LoRa sync word selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SyncWord {
+    /// Private networks (SX1262 power-on default, register value 0x1424).
+    #[default]
+    Private,
+    /// Public networks / LoRaWAN (register value 0x3444).
+    #[allow(dead_code)] // constructed by the gateway mode
+    Public,
+}
+
+impl SyncWord {
+    /// The (MSB, LSB) register pair for registers 0x0740/0x0741.
+    pub fn register_bytes(self) -> (u8, u8) {
+        match self {
+            SyncWord::Private => (0x14, 0x24),
+            SyncWord::Public => (0x34, 0x44),
+        }
+    }
+}
+
 /// Configuration for LoRa modulation
 #[derive(Debug, Clone)]
 pub struct LoraConfig {
@@ -41,6 +62,14 @@ pub struct LoraConfig {
     pub coding_rate: u8,
     /// Transmit power in dBm
     pub tx_power_dbm: i8,
+    /// Network sync word
+    pub sync_word: SyncWord,
+    /// Inverted IQ (LoRaWAN downlinks); standard IQ otherwise
+    pub iq_inverted: bool,
+    /// Append/verify the payload CRC (LoRaWAN downlinks disable it)
+    pub crc_on: bool,
+    /// Preamble length in symbols
+    pub preamble_len: u16,
 }
 
 impl Default for LoraConfig {
@@ -53,6 +82,10 @@ impl Default for LoraConfig {
             bandwidth_khz: lora_defaults::BANDWIDTH_KHZ,
             coding_rate: lora_defaults::CODING_RATE,
             tx_power_dbm: lora_defaults::TX_POWER_DBM,
+            sync_word: SyncWord::Private,
+            iq_inverted: false,
+            crc_on: true,
+            preamble_len: 8,
         }
     }
 }
@@ -89,9 +122,16 @@ pub trait LoraRadio {
 
     /// Wait until the radio signals a pending RX event or the timeout expires.
     ///
+    /// Returns the instant the event was observed, captured before any SPI
+    /// traffic - this timestamp anchors LoRaWAN downlink windows, so read
+    /// latency must not pollute it.
+    ///
     /// Cancel-safe: implementations must not touch the SPI bus here, so the
     /// future can be raced in a select and dropped at any await point.
-    fn wait_rx_event(&mut self, timeout_ms: u32) -> impl Future<Output = Result<(), LoraError>>;
+    fn wait_rx_event(
+        &mut self,
+        timeout_ms: u32,
+    ) -> impl Future<Output = Result<embassy_time::Instant, LoraError>>;
 
     /// Read the packet behind a signalled RX event.
     ///
@@ -212,10 +252,10 @@ pub mod mock {
             Ok(())
         }
 
-        async fn wait_rx_event(&mut self, _timeout_ms: u32) -> Result<(), LoraError> {
+        async fn wait_rx_event(&mut self, _timeout_ms: u32) -> Result<embassy_time::Instant, LoraError> {
             // An event is pending when a packet or an injected error waits.
             if self.next_rx_error.borrow().is_some() || !self.rx_queue.borrow().is_empty() {
-                Ok(())
+                Ok(embassy_time::Instant::now())
             } else {
                 Err(LoraError::Timeout)
             }

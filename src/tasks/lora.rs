@@ -65,7 +65,7 @@ pub async fn lora_task<R: LoraRadio>(
         )
         .await
         {
-            Either::First(Ok(())) => {
+            Either::First(Ok(_rx_instant)) => {
                 // CRC errors and spurious IRQs return Err; the radio stays in RX.
                 if let Ok(packet) = radio.read_packet().await {
                     // Signal LED flash for received packet (non-blocking)
