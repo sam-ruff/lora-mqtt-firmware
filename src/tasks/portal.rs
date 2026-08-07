@@ -98,7 +98,16 @@ pub async fn portal_dns_task(stack: Stack<'static>) {
     }
 }
 
-/// The config page and JSON API.
+/// Serialises config applies across the HTTP handler pool: the hub-ctrl
+/// request/reply channels carry one exchange at a time.
+static APPLY_LOCK: embassy_sync::mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::mutex::Mutex::new(());
+
+/// The config page and JSON API. Runs as a small pool: browsers open
+/// parallel connections (page, API calls, favicon), and a single listening
+/// socket refuses whatever arrives while it is serving.
 pub async fn portal_http_task(stack: Stack<'static>, config: &'static HubConfig) {
     stack.wait_link_up().await;
     debug!("Portal: HTTP server up at 192.168.4.1");
@@ -176,6 +185,7 @@ async fn respond(
             Some(false)
         }
         Route::ApiConfigPost(body) => {
+            let _guard = APPLY_LOCK.lock().await;
             let commands = match commands_from_update(body, config) {
                 Ok(commands) => commands,
                 Err(UpdateError::Bad) => {
