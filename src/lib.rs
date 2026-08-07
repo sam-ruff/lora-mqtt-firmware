@@ -11,8 +11,6 @@ pub mod lora;
 
 // These modules depend on embassy/async features only available with embedded feature
 #[cfg(feature = "embedded")]
-pub mod ble;
-#[cfg(feature = "embedded")]
 pub mod debug;
 // The dispatcher itself is plain async and unit-tested on the host; only its
 // embassy-sync channels are embedded-gated (inside the module).

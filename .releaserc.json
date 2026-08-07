@@ -8,8 +8,8 @@
       {
         "assets": [
           {
-            "path": "release-assets/walkie-textie-firmware-esp32s3.bin",
-            "label": "Firmware Binary (ESP32-S3)"
+            "path": "release-assets/walkie-textie-hub-esp32s3.bin",
+            "label": "Hub Firmware Binary (ESP32-S3)"
           }
         ]
       }

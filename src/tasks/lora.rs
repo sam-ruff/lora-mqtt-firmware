@@ -83,7 +83,7 @@ pub async fn lora_task<R: LoraRadio>(
                         rssi: packet.rssi,
                         snr: packet.snr,
                     };
-                    // Broadcast unsolicited to all subscribers (serial, BLE)
+                    // Broadcast unsolicited to all subscribers (serial, MQTT bridge)
                     response_pub.publish_immediate(ResponseMessage::Unsolicited(response));
                 }
             }
