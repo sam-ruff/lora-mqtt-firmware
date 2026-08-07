@@ -3,7 +3,7 @@ Pod::Spec.new do |s|
   s.version          = '1.0.0'
   s.summary          = 'Walkie Textie hub configurator Rust engine.'
   s.description      = 'Static library exposing the hub provisioning client to the app over flutter_rust_bridge.'
-  s.homepage         = 'https://github.com/sam-ruff/walkie-textie-hub-firmware'
+  s.homepage         = 'https://github.com/sam-ruff/lora-mqtt-firmware'
   s.license          = { :type => 'MIT' }
   s.author           = { 'Walkie Textie' => 'noreply@meshcore.dev' }
   s.source           = { :path => '.' }
