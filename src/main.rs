@@ -33,11 +33,15 @@ use static_cell::StaticCell;
 mod config;
 mod debug;
 mod dispatcher;
+mod hub_config;
 mod lora;
+mod net;
 mod tasks;
 mod usb;
 
 use dispatcher::COMMAND_CHANNEL;
+use hub_config::store::ConfigStore;
+use hub_config::HubConfig;
 use lora::driver::{Sx1262Driver, Sx1262Pins};
 use tasks::{AdminReceiver, CommandReceiver, CommandSender, LedReceiver, LedSender, ADMIN_CHANNEL, LED_CHANNEL};
 
@@ -46,6 +50,9 @@ static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 /// Static cell for esp-radio controller (needed for 'static lifetime)
 static RADIO_CONTROLLER: StaticCell<esp_radio::Controller<'static>> = StaticCell::new();
+
+/// Active configuration, loaded once at boot (flash overrides baked defaults)
+static HUB_CONFIG: StaticCell<HubConfig> = StaticCell::new();
 
 // USB static buffers (must be 'static for embassy-usb)
 static EP_OUT_BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
@@ -156,10 +163,24 @@ fn main() -> ! {
         esp_radio::init().expect("Failed to initialize esp-radio")
     );
 
+    // Open the flash config store (nvs partition). The hub still runs on
+    // baked defaults without it; settings just cannot be persisted.
+    let config_store = ConfigStore::new(peripherals.FLASH).ok();
+
+    let board = Board {
+        usb_device,
+        data_cdc,
+        debug_cdc,
+        lora_driver,
+        led,
+        device_id,
+        config_store,
+    };
+
     // Create and run the embassy executor
     let executor = EXECUTOR.init(esp_rtos::embassy::Executor::new());
     executor.run(|spawner| {
-        spawner.must_spawn(async_main(spawner, usb_device, data_cdc, debug_cdc, lora_driver, led, device_id));
+        spawner.must_spawn(async_main(spawner, board));
     })
 }
 
@@ -185,22 +206,45 @@ type UsbDriver = Driver<'static>;
 /// Type alias for the CDC class
 type CdcClass = CdcAcmClass<'static, UsbDriver>;
 
-#[embassy_executor::task]
-async fn async_main(
-    spawner: Spawner,
+/// Type alias for the concrete LoRa driver on this board
+type LoraDriver = Sx1262Driver<
+    Spi<'static, Async>,
+    Output<'static>,
+    Input<'static>,
+    Output<'static>,
+    Input<'static>,
+>;
+
+/// Everything constructed in `main` that the async side takes ownership of
+struct Board {
     usb_device: UsbDevice<'static, UsbDriver>,
     data_cdc: CdcClass,
     debug_cdc: CdcClass,
-    lora_driver: Sx1262Driver<
-        esp_hal::spi::master::Spi<'static, Async>,
-        Output<'static>,
-        Input<'static>,
-        Output<'static>,
-        Input<'static>,
-    >,
+    lora_driver: LoraDriver,
     led: Output<'static>,
     device_id: [u8; 3],
-) {
+    config_store: Option<ConfigStore>,
+}
+
+#[embassy_executor::task]
+async fn async_main(spawner: Spawner, board: Board) {
+    let Board {
+        usb_device,
+        data_cdc,
+        debug_cdc,
+        lora_driver,
+        led,
+        device_id,
+        mut config_store,
+    } = board;
+
+    // Load the active config: a stored value overrides the baked defaults.
+    let stored = match config_store.as_mut() {
+        Some(store) => store.load().await,
+        None => None,
+    };
+    let hub_config: &'static HubConfig = HUB_CONFIG.init(hub_config::select_config(stored));
+
     // Get channel handles
     let command_sender = COMMAND_CHANNEL.sender();
     let command_receiver = COMMAND_CHANNEL.receiver();
@@ -237,7 +281,14 @@ async fn async_main(
     spawner.spawn(admin_wrapper(admin_receiver)).unwrap();
     spawner.spawn(lora_wrapper(lora_driver, command_receiver, led_sender)).unwrap();
     spawner.spawn(led_wrapper(led, led_receiver)).unwrap();
+    spawner.spawn(hub_ctrl_wrapper(config_store, hub_config)).unwrap();
     debug!("All tasks started");
+}
+
+/// Wrapper task for hub provisioning/status commands
+#[embassy_executor::task]
+async fn hub_ctrl_wrapper(store: Option<ConfigStore>, config: &'static HubConfig) {
+    tasks::hub_ctrl_task(store, config).await;
 }
 
 /// Wrapper task for USB device (handles USB events)
@@ -282,13 +333,7 @@ async fn led_wrapper(led: Output<'static>, receiver: LedReceiver) {
 /// Wrapper task for LoRa operations
 #[embassy_executor::task]
 async fn lora_wrapper(
-    radio: Sx1262Driver<
-        Spi<'static, Async>,
-        Output<'static>,
-        Input<'static>,
-        Output<'static>,
-        Input<'static>,
-    >,
+    radio: LoraDriver,
     command_receiver: CommandReceiver,
     led_sender: LedSender,
 ) {

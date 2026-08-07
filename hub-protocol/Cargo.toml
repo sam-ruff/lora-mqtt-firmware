@@ -1,0 +1,16 @@
+[package]
+name = "hub-protocol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wt-protocol = { path = "../vendor/wt-protocol", default-features = false }
+heapless = { version = "0.8", default-features = false }
+corncobs = "0.1"
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
+
+[features]
+default = []
+# Serde derives on the settings structs so the firmware can persist them
+# with postcard.
+serde = ["dep:serde", "heapless/serde"]

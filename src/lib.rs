@@ -9,6 +9,13 @@ pub use wt_protocol;
 // can be unit-tested on the host; the hardware driver/traits are gated inside it.
 pub mod lora;
 
+// Hub configuration (defaults, validation, command application) is pure and
+// host-tested; only the flash store inside it is embedded-gated.
+pub mod hub_config;
+
+// Network-side helpers (stats atomics) are dependency-free and host-tested.
+pub mod net;
+
 // These modules depend on embassy/async features only available with embedded feature
 #[cfg(feature = "embedded")]
 pub mod debug;
