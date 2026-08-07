@@ -17,10 +17,13 @@ esp_bootloader_esp_idf::esp_app_desc!(
 );
 
 use embassy_executor::Spawner;
+use embassy_net::{Runner, Stack, StackResources};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::UsbDevice;
 use esp_backtrace as _;
+use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::ram;
 use esp_hal::otg_fs::asynch::{Config as DriverConfig, Driver};
 use esp_hal::otg_fs::Usb;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
@@ -54,6 +57,9 @@ static RADIO_CONTROLLER: StaticCell<esp_radio::Controller<'static>> = StaticCell
 /// Active configuration, loaded once at boot (flash overrides baked defaults)
 static HUB_CONFIG: StaticCell<HubConfig> = StaticCell::new();
 
+/// Socket storage for the embassy-net stack: MQTT TCP + DNS + DHCP + spare
+static STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
+
 // USB static buffers (must be 'static for embassy-usb)
 static EP_OUT_BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
 static DATA_CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
@@ -67,10 +73,12 @@ static USB_SERIAL: StaticCell<[u8; 10]> = StaticCell::new();
 
 #[esp_hal::main]
 fn main() -> ! {
-    // Heap for the radio subsystem (WiFi driver buffers must live in internal RAM)
+    // Heap for the radio subsystem (WiFi driver buffers must live in internal
+    // RAM); the bootloader-reclaimed region doubles it for socket buffers.
     esp_alloc::heap_allocator!(size: 64 * 1024);
+    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
 
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+    let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
 
     // Turn on LED (active low)
     let led = Output::new(peripherals.GPIO48, Level::Low, OutputConfig::default());
@@ -159,8 +167,25 @@ fn main() -> ! {
 
     // Initialise esp-radio (must be after esp_rtos::start); the WiFi driver
     // borrows this controller.
-    let _radio_controller = RADIO_CONTROLLER.init(
+    let radio_controller = RADIO_CONTROLLER.init(
         esp_radio::init().expect("Failed to initialize esp-radio")
+    );
+
+    let (wifi_controller, interfaces) = esp_radio::wifi::new(
+        radio_controller,
+        peripherals.WIFI,
+        esp_radio::wifi::Config::default(),
+    )
+    .expect("Failed to initialize WiFi");
+
+    // Network stack over the station interface, DHCP-configured
+    let rng = esp_hal::rng::Rng::new();
+    let net_seed = ((rng.random() as u64) << 32) | rng.random() as u64;
+    let (stack, net_runner) = embassy_net::new(
+        interfaces.sta,
+        embassy_net::Config::dhcpv4(Default::default()),
+        STACK_RESOURCES.init(StackResources::new()),
+        net_seed,
     );
 
     // Open the flash config store (nvs partition). The hub still runs on
@@ -175,6 +200,9 @@ fn main() -> ! {
         led,
         device_id,
         config_store,
+        wifi_controller,
+        net_runner,
+        stack,
     };
 
     // Create and run the embassy executor
@@ -215,6 +243,9 @@ type LoraDriver = Sx1262Driver<
     Input<'static>,
 >;
 
+/// Type alias for the WiFi station device inside the net stack runner
+type NetRunner = Runner<'static, esp_radio::wifi::WifiDevice<'static>>;
+
 /// Everything constructed in `main` that the async side takes ownership of
 struct Board {
     usb_device: UsbDevice<'static, UsbDriver>,
@@ -224,6 +255,9 @@ struct Board {
     led: Output<'static>,
     device_id: [u8; 3],
     config_store: Option<ConfigStore>,
+    wifi_controller: esp_radio::wifi::WifiController<'static>,
+    net_runner: NetRunner,
+    stack: Stack<'static>,
 }
 
 #[embassy_executor::task]
@@ -236,6 +270,9 @@ async fn async_main(spawner: Spawner, board: Board) {
         led,
         device_id,
         mut config_store,
+        wifi_controller,
+        net_runner,
+        stack,
     } = board;
 
     // Load the active config: a stored value overrides the baked defaults.
@@ -282,6 +319,9 @@ async fn async_main(spawner: Spawner, board: Board) {
     spawner.spawn(lora_wrapper(lora_driver, command_receiver, led_sender)).unwrap();
     spawner.spawn(led_wrapper(led, led_receiver)).unwrap();
     spawner.spawn(hub_ctrl_wrapper(config_store, hub_config)).unwrap();
+    spawner.spawn(net_runner_wrapper(net_runner)).unwrap();
+    spawner.spawn(wifi_wrapper(wifi_controller, hub_config)).unwrap();
+    spawner.spawn(net_watch_wrapper(stack)).unwrap();
     debug!("All tasks started");
 }
 
@@ -289,6 +329,27 @@ async fn async_main(spawner: Spawner, board: Board) {
 #[embassy_executor::task]
 async fn hub_ctrl_wrapper(store: Option<ConfigStore>, config: &'static HubConfig) {
     tasks::hub_ctrl_task(store, config).await;
+}
+
+/// Wrapper task for the embassy-net stack runner
+#[embassy_executor::task]
+async fn net_runner_wrapper(mut runner: NetRunner) {
+    runner.run().await;
+}
+
+/// Wrapper task for the WiFi connection manager
+#[embassy_executor::task]
+async fn wifi_wrapper(
+    controller: esp_radio::wifi::WifiController<'static>,
+    config: &'static HubConfig,
+) {
+    tasks::wifi_task(controller, config).await;
+}
+
+/// Wrapper task for the DHCP/IP state watcher
+#[embassy_executor::task]
+async fn net_watch_wrapper(stack: Stack<'static>) {
+    tasks::net_watch_task(stack).await;
 }
 
 /// Wrapper task for USB device (handles USB events)
