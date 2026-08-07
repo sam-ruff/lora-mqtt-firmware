@@ -8,7 +8,7 @@
       {
         "assets": [
           {
-            "path": "release-assets/walkie-textie-hub-esp32s3.bin",
+            "path": "release-assets/lora-mqtt-hub-esp32s3.bin",
             "label": "Hub Firmware Binary (ESP32-S3)"
           }
         ]

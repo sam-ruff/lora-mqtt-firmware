@@ -2,7 +2,7 @@
 //! access point.
 //!
 //! Unprovisioned hubs (no SSID) start straight in SoftAP mode so a phone
-//! can join `WalkieTextieHub-XXXXXX` and configure them. Provisioned hubs
+//! can join `LoRaMqttHub-XXXXXX` and configure them. Provisioned hubs
 //! run as a station; if the network stays unreachable through repeated
 //! attempts (wrong password, network gone) the hub falls back to the
 //! access point so it can be re-provisioned without a serial cable.
@@ -101,7 +101,7 @@ async fn start_station(
 /// tasks notice via the AP stack's link coming up.
 async fn run_access_point(controller: &mut WifiController<'static>, device_id: [u8; 3]) {
     let mut ssid: heapless::String<32> = heapless::String::new();
-    let _ = ssid.push_str("WalkieTextieHub-");
+    let _ = ssid.push_str("LoRaMqttHub-");
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     for byte in device_id {
         let _ = ssid.push(HEX[(byte >> 4) as usize] as char);

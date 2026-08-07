@@ -1,6 +1,6 @@
 //! Hub bridge-mode end-to-end test.
 //!
-//! Needs: one hub board (USB serial WTH-...), one node board (WT-...), and a
+//! Needs: one hub board (USB serial LMH-...), one node board (WT-...), and a
 //! reachable MQTT broker (e.g. `mosquitto` on this machine). Provisions the
 //! hub over USB serial, reboots it into the new config, then proves the full
 //! LoRa <-> MQTT path in both directions.
@@ -25,7 +25,7 @@ use protocol::{
 
 #[derive(Parser)]
 struct Args {
-    /// Hub board data port ("auto" detects by the WTH- USB serial)
+    /// Hub board data port ("auto" detects by the LMH- USB serial)
     #[arg(long, default_value = "auto")]
     hub_port: String,
     /// Node board data port ("auto" detects by the WT- USB serial)
@@ -61,7 +61,7 @@ fn main() {
 fn run(args: &Args) -> Result<()> {
     println!("{}", "Hub bridge-mode end-to-end test".bold());
 
-    let hub_port = resolve_port_with_prefix(&args.hub_port, "WTH-")?;
+    let hub_port = resolve_port_with_prefix(&args.hub_port, "LMH-")?;
     let node_port = resolve_port_with_prefix(&args.node_port, "WT-")?;
     println!("  hub:  {hub_port}\n  node: {node_port}");
 
@@ -74,7 +74,7 @@ fn run(args: &Args) -> Result<()> {
         hub.reboot()?;
         drop(hub);
         std::thread::sleep(Duration::from_secs(3));
-        let hub_port = resolve_port_with_prefix("auto", "WTH-")
+        let hub_port = resolve_port_with_prefix("auto", "LMH-")
             .context("hub did not re-enumerate after reboot")?;
         hub = DeviceClient::new(&hub_port, 115200)?;
         hub.wait_ready(Duration::from_secs(10))?;
@@ -195,14 +195,14 @@ fn wait_online(hub: &mut DeviceClient) -> Result<String> {
         std::thread::sleep(Duration::from_secs(2));
     }
 
-    // The topic id is the hex tail of the USB serial (WTH-XXXXXX).
+    // The topic id is the hex tail of the USB serial (LMH-XXXXXX).
     let port = serialport::available_ports()?;
     for info in port {
         let serialport::SerialPortType::UsbPort(usb) = &info.port_type else {
             continue;
         };
         if let Some(serial) = usb.serial_number.as_deref() {
-            if let Some(id) = serial.strip_prefix("WTH-") {
+            if let Some(id) = serial.strip_prefix("LMH-") {
                 return Ok(id.to_string());
             }
         }

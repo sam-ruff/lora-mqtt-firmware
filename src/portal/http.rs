@@ -273,7 +273,7 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Walkie-Textie Hub</title>
+<title>LoRaMqttHub</title>
 <style>
 body{font-family:system-ui,sans-serif;margin:0;background:#f2f2f0;color:#1c1c1c}
 main{max-width:26rem;margin:0 auto;padding:1.2rem}
@@ -289,7 +289,7 @@ button{width:100%;padding:.7rem;border:0;border-radius:8px;background:#128c7e;co
 </head>
 <body>
 <main>
-<h1>Walkie-Textie Hub setup</h1>
+<h1>LoRaMqttHub setup</h1>
 <form id="f">
 <fieldset><legend>WiFi</legend>
 <label>Network name (SSID)</label><input name="wifi_ssid" required>

@@ -1,6 +1,6 @@
 //! Gateway-mode Semtech UDP forwarder test.
 //!
-//! Needs one hub board (USB serial WTH-...) and the WiFi credentials already
+//! Needs one hub board (USB serial LMH-...) and the WiFi credentials already
 //! provisioned (run `cargo hub` first, or pass --wifi-ssid/--wifi-password).
 //! This host binds the network-server side (UDP 1700) and verifies the
 //! forwarder protocol against the live gateway: PULL_DATA keepalives with the
@@ -35,7 +35,7 @@ const TX_ACK: u8 = 0x05;
 
 #[derive(Parser)]
 struct Args {
-    /// Hub board data port ("auto" detects by the WTH- USB serial)
+    /// Hub board data port ("auto" detects by the LMH- USB serial)
     #[arg(long, default_value = "auto")]
     hub_port: String,
     /// This machine's address as the hub reaches it
@@ -72,7 +72,7 @@ fn run(args: &Args) -> Result<()> {
     socket.set_read_timeout(Some(Duration::from_secs(2)))?;
 
     if !args.skip_provision {
-        let hub_port = resolve_port_with_prefix(&args.hub_port, "WTH-")?;
+        let hub_port = resolve_port_with_prefix(&args.hub_port, "LMH-")?;
         println!("  hub: {hub_port}");
         let mut hub = DeviceClient::new(&hub_port, 115200)?;
         hub.wait_ready(Duration::from_secs(5))?;

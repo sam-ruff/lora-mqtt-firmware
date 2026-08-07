@@ -23,7 +23,7 @@ class HubConfigApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => HubService(mockMode: mockMode),
       child: MaterialApp(
-        title: 'Walkie-Textie Hub',
+        title: 'LoRaMqttHub',
         theme: buildTheme(),
         home: const ConnectScreen(),
       ),
