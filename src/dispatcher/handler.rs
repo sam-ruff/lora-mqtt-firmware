@@ -99,6 +99,17 @@ pub static RESPONSE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ResponseMess
 #[cfg(feature = "embedded")]
 pub static HUB_CHANNEL: Channel<CriticalSectionRawMutex, HubCommandEnvelope, 4> = Channel::new();
 
+/// Request/reply pair for the provisioning portal's HTTP handler: the portal
+/// sends hub commands here and awaits the typed response (the serial path
+/// gets pre-encoded frames via `ResponseMessage::HubRaw` instead). The HTTP
+/// server handles one request at a time, so a depth of 2 never backs up.
+#[cfg(feature = "embedded")]
+pub static PORTAL_REQUEST: Channel<CriticalSectionRawMutex, hub_protocol::HubCommand, 2> =
+    Channel::new();
+#[cfg(feature = "embedded")]
+pub static PORTAL_REPLY: Channel<CriticalSectionRawMutex, hub_protocol::HubResponse, 2> =
+    Channel::new();
+
 /// Immediate publisher for `RESPONSE_CHANNEL` (the LoRa task broadcasts here).
 #[cfg(feature = "embedded")]
 pub type ResponsePublisher =
