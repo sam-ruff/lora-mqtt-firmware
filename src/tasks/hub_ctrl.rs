@@ -5,43 +5,61 @@
 //! hub-protocol frames. Settings apply on the next boot (the host sends the
 //! stock Reboot command after provisioning).
 
+use embassy_futures::select::{select, Either};
 use embassy_time::Instant;
 use hub_protocol::{AckStatus, HubCommand, HubResponse};
 
 use crate::debug;
-use crate::dispatcher::{ResponseMessage, HUB_CHANNEL, RESPONSE_CHANNEL};
+use crate::dispatcher::{
+    ResponseMessage, HUB_CHANNEL, PORTAL_REPLY, PORTAL_REQUEST, RESPONSE_CHANNEL,
+};
 use crate::hub_config::store::ConfigStore;
 use crate::hub_config::{apply_command, network_config_response, ConfigAction, HubConfig};
 use crate::net::stats::HUB_STATS;
 
 pub async fn hub_ctrl_task(mut store: Option<ConfigStore>, active: &'static HubConfig) {
     let receiver = HUB_CHANNEL.receiver();
+    let portal_receiver = PORTAL_REQUEST.receiver();
     let response_pub = RESPONSE_CHANNEL.immediate_publisher();
     // Working copy: starts as the active config, tracks sets before reboot.
     let mut pending = active.clone();
 
     loop {
-        let envelope = receiver.receive().await;
-        let response = match &envelope.command {
-            HubCommand::GetNetworkConfig => network_config_response(&pending),
-            HubCommand::GetHubStatus => {
-                let uptime_secs = Instant::now().as_secs() as u32;
-                HubResponse::HubStatus(HUB_STATS.snapshot(uptime_secs))
+        match select(receiver.receive(), portal_receiver.receive()).await {
+            Either::First(envelope) => {
+                let response = handle(&mut store, &mut pending, &envelope.command).await;
+                let frame = hub_protocol::encode_response(&response);
+                response_pub.publish_immediate(ResponseMessage::HubRaw {
+                    source: envelope.source,
+                    frame,
+                });
             }
-            command => {
-                let status = match apply_command(&mut pending, command) {
-                    Ok(action) => persist(&mut store, &pending, action).await,
-                    Err(status) => status,
-                };
-                HubResponse::ConfigAck { status }
+            Either::Second(command) => {
+                let response = handle(&mut store, &mut pending, &command).await;
+                PORTAL_REPLY.send(response).await;
             }
-        };
+        }
+    }
+}
 
-        let frame = hub_protocol::encode_response(&response);
-        response_pub.publish_immediate(ResponseMessage::HubRaw {
-            source: envelope.source,
-            frame,
-        });
+async fn handle(
+    store: &mut Option<ConfigStore>,
+    pending: &mut HubConfig,
+    command: &HubCommand,
+) -> HubResponse {
+    match command {
+        HubCommand::GetNetworkConfig => network_config_response(pending),
+        HubCommand::GetHubStatus => {
+            let uptime_secs = Instant::now().as_secs() as u32;
+            HubResponse::HubStatus(HUB_STATS.snapshot(uptime_secs))
+        }
+        command => {
+            let status = match apply_command(pending, command) {
+                Ok(action) => persist(store, pending, action).await,
+                Err(status) => status,
+            };
+            HubResponse::ConfigAck { status }
+        }
     }
 }
 

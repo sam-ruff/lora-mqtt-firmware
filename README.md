@@ -32,17 +32,27 @@ and exposes two CDC ports: data (interface 0) and debug log (interface 2).
 
 ## Configuration
 
-Defaults can be baked at build time through environment variables, all
+An unprovisioned hub (no WiFi credentials) starts its own open hotspot,
+`WalkieTextieHub-XXXXXX`. Join it with a phone and the captive portal at
+`http://192.168.4.1` opens: set the WiFi network, MQTT broker, operating mode
+and gateway settings, save, and the hub restarts onto your network. The same
+portal appears again if the configured network stays unreachable (wrong
+password, network gone), so a hub can always be re-provisioned without a
+cable. The portal also serves a JSON API (`GET/POST /api/config`,
+`GET /api/status`) for app-driven setup.
+
+Defaults can also be baked at build time through environment variables, all
 optional: `HUB_WIFI_SSID`, `HUB_WIFI_PASSWORD`, `HUB_MQTT_HOST`,
 `HUB_MQTT_PORT`, `HUB_MQTT_CLIENT_ID`, `HUB_MODE` (`bridge` or `gateway`),
 `HUB_GW_HOST`, `HUB_GW_PORT`.
 
-Runtime provisioning happens over the USB data port with hub commands layered
-on the Walkie-Textie wire protocol (COBS-framed, CRC-16, see `hub-protocol/`):
-set WiFi credentials, MQTT broker, gateway settings and mode; read back the
-configuration (the WiFi password is never echoed) and live status (link
-states, IP, counters, uptime). Settings persist in the `nvs` flash partition
-and apply on the next boot, so the flow is set, then reboot.
+Runtime provisioning also works over the USB data port with hub commands
+layered on the Walkie-Textie wire protocol (COBS-framed, CRC-16, see
+`hub-protocol/`): set WiFi credentials, MQTT broker, gateway settings and
+mode; read back the configuration (the WiFi password is never echoed) and
+live status (link states, IP, counters, uptime). Settings persist in the
+`nvs` flash partition and apply on the next boot, so the flow is set, then
+reboot.
 
 ## Bridge mode
 

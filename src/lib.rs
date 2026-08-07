@@ -27,6 +27,10 @@ pub mod bridge;
 #[cfg(any(feature = "embedded", feature = "host-test"))]
 pub mod gateway;
 
+// The provisioning portal codecs (DHCP, DNS, HTTP routing and payloads) are
+// pure and host-tested; the socket tasks live under tasks/ in the binary.
+pub mod portal;
+
 // These modules depend on embassy/async features only available with embedded feature
 #[cfg(feature = "embedded")]
 pub mod debug;

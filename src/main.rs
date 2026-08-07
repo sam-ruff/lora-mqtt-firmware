@@ -41,6 +41,7 @@ mod gateway;
 mod hub_config;
 mod lora;
 mod net;
+mod portal;
 mod tasks;
 mod usb;
 
@@ -63,6 +64,9 @@ static HUB_CONFIG: StaticCell<HubConfig> = StaticCell::new();
 
 /// Socket storage for the embassy-net stack: MQTT TCP + DNS + DHCP + spare
 static STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
+
+/// Socket storage for the SoftAP provisioning stack: DHCP + DNS + HTTP + spare
+static AP_STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
 
 // USB static buffers (must be 'static for embassy-usb)
 static EP_OUT_BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
@@ -192,6 +196,22 @@ fn main() -> ! {
         net_seed,
     );
 
+    // Static-IP stack over the SoftAP interface for the provisioning portal;
+    // idle (link down) whenever the access point is not running.
+    let ap_ip = core::net::Ipv4Addr::from(portal::AP_IP);
+    let ap_config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+        address: embassy_net::Ipv4Cidr::new(ap_ip, 24),
+        gateway: Some(ap_ip),
+        dns_servers: heapless::Vec::new(),
+    });
+    let ap_seed = ((rng.random() as u64) << 32) | rng.random() as u64;
+    let (ap_stack, ap_net_runner) = embassy_net::new(
+        interfaces.ap,
+        ap_config,
+        AP_STACK_RESOURCES.init(StackResources::new()),
+        ap_seed,
+    );
+
     // Open the flash config store (nvs partition). The hub still runs on
     // baked defaults without it; settings just cannot be persisted.
     let config_store = ConfigStore::new(peripherals.FLASH).ok();
@@ -208,6 +228,8 @@ fn main() -> ! {
         wifi_controller,
         net_runner,
         stack,
+        ap_net_runner,
+        ap_stack,
     };
 
     // Create and run the embassy executor
@@ -264,6 +286,8 @@ struct Board {
     wifi_controller: esp_radio::wifi::WifiController<'static>,
     net_runner: NetRunner,
     stack: Stack<'static>,
+    ap_net_runner: NetRunner,
+    ap_stack: Stack<'static>,
 }
 
 #[embassy_executor::task]
@@ -280,6 +304,8 @@ async fn async_main(spawner: Spawner, board: Board) {
         wifi_controller,
         net_runner,
         stack,
+        ap_net_runner,
+        ap_stack,
     } = board;
 
     // Load the active config: a stored value overrides the baked defaults.
@@ -326,8 +352,12 @@ async fn async_main(spawner: Spawner, board: Board) {
     spawner.spawn(led_wrapper(led, led_receiver)).unwrap();
     spawner.spawn(hub_ctrl_wrapper(config_store, hub_config)).unwrap();
     spawner.spawn(net_runner_wrapper(net_runner)).unwrap();
-    spawner.spawn(wifi_wrapper(wifi_controller, hub_config)).unwrap();
+    spawner.spawn(ap_net_runner_wrapper(ap_net_runner)).unwrap();
+    spawner.spawn(wifi_wrapper(wifi_controller, hub_config, device_id)).unwrap();
     spawner.spawn(net_watch_wrapper(stack)).unwrap();
+    spawner.spawn(portal_dhcp_wrapper(ap_stack)).unwrap();
+    spawner.spawn(portal_dns_wrapper(ap_stack)).unwrap();
+    spawner.spawn(portal_http_wrapper(ap_stack, hub_config)).unwrap();
 
     // The radio has one owner, selected by the configured mode.
     match hub_config.mode {
@@ -366,9 +396,15 @@ async fn hub_ctrl_wrapper(store: Option<ConfigStore>, config: &'static HubConfig
     tasks::hub_ctrl_task(store, config).await;
 }
 
-/// Wrapper task for the embassy-net stack runner
+/// Wrapper task for the embassy-net stack runner (station)
 #[embassy_executor::task]
 async fn net_runner_wrapper(mut runner: NetRunner) {
+    runner.run().await;
+}
+
+/// Wrapper task for the embassy-net stack runner (SoftAP)
+#[embassy_executor::task]
+async fn ap_net_runner_wrapper(mut runner: NetRunner) {
     runner.run().await;
 }
 
@@ -377,8 +413,25 @@ async fn net_runner_wrapper(mut runner: NetRunner) {
 async fn wifi_wrapper(
     controller: esp_radio::wifi::WifiController<'static>,
     config: &'static HubConfig,
+    device_id: [u8; 3],
 ) {
-    tasks::wifi_task(controller, config).await;
+    tasks::wifi_task(controller, config, device_id).await;
+}
+
+/// Wrapper tasks for the provisioning portal (idle until the AP link is up)
+#[embassy_executor::task]
+async fn portal_dhcp_wrapper(stack: Stack<'static>) {
+    tasks::portal_dhcp_task(stack).await;
+}
+
+#[embassy_executor::task]
+async fn portal_dns_wrapper(stack: Stack<'static>) {
+    tasks::portal_dns_task(stack).await;
+}
+
+#[embassy_executor::task]
+async fn portal_http_wrapper(stack: Stack<'static>, config: &'static HubConfig) {
+    tasks::portal_http_task(stack, config).await;
 }
 
 /// Wrapper task for the DHCP/IP state watcher
