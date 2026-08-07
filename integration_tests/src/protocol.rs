@@ -12,9 +12,23 @@ pub const PROTOCOL_VERSION: u8 = 1;
 #[repr(u8)]
 pub enum CommandId {
     GetVersion = 0x01,
+    Reboot = 0x03,
     LoraTx = 0x10,
     SetSpreadingFactor = 0x11,
     GetRadioConfig = 0x12,
+}
+
+/// Hub command IDs (reserved block 0x20..=0x2F).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum HubCommandId {
+    SetWifiConfig = 0x20,
+    SetMqttConfig = 0x21,
+    GetNetworkConfig = 0x22,
+    GetHubStatus = 0x23,
+    SetMode = 0x24,
+    ClearNetworkConfig = 0x25,
+    SetGatewayConfig = 0x26,
 }
 
 /// Response status codes matching the firmware protocol.
@@ -83,7 +97,7 @@ pub fn build_command(cmd_id: CommandId, payload: &[u8]) -> Vec<u8> {
     cobs_encode(&raw)
 }
 
-/// Response IDs matching the firmware
+/// Response IDs matching the firmware (stock plus the hub block).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ResponseId {
@@ -92,6 +106,9 @@ pub enum ResponseId {
     RxPacket = 0x11,
     RadioConfig = 0x12,
     TxRefused = 0x13,
+    NetworkConfig = 0x20,
+    HubStatus = 0x21,
+    ConfigAck = 0x22,
     Error = 0xFF,
 }
 
@@ -105,10 +122,88 @@ impl TryFrom<u8> for ResponseId {
             0x11 => Ok(ResponseId::RxPacket),
             0x12 => Ok(ResponseId::RadioConfig),
             0x13 => Ok(ResponseId::TxRefused),
+            0x20 => Ok(ResponseId::NetworkConfig),
+            0x21 => Ok(ResponseId::HubStatus),
+            0x22 => Ok(ResponseId::ConfigAck),
             0xFF => Ok(ResponseId::Error),
             _ => Err(value),
         }
     }
+}
+
+/// Payload builders for the hub provisioning commands. Strings are one-byte
+/// length prefixed, integers little-endian, matching hub-protocol.
+pub fn wifi_config_payload(ssid: &str, password: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    push_string(&mut payload, ssid);
+    push_string(&mut payload, password);
+    payload
+}
+
+pub fn mqtt_config_payload(host: &str, port: u16, client_id: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&port.to_le_bytes());
+    push_string(&mut payload, host);
+    push_string(&mut payload, client_id);
+    payload
+}
+
+pub fn gateway_config_payload(
+    freq_hz: u32,
+    spreading_factor: u8,
+    bandwidth_khz: u32,
+    coding_rate: u8,
+    host: &str,
+    port: u16,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&freq_hz.to_le_bytes());
+    payload.push(spreading_factor);
+    payload.extend_from_slice(&bandwidth_khz.to_le_bytes());
+    payload.push(coding_rate);
+    payload.extend_from_slice(&port.to_le_bytes());
+    push_string(&mut payload, host);
+    payload
+}
+
+fn push_string(payload: &mut Vec<u8>, s: &str) {
+    payload.push(s.len() as u8);
+    payload.extend_from_slice(s.as_bytes());
+}
+
+/// Parsed HubStatus response payload.
+#[derive(Debug, Clone, Copy)]
+pub struct HubStatus {
+    pub wifi_state: u8,
+    pub ip: [u8; 4],
+    pub mqtt_state: u8,
+    pub uplink_count: u32,
+    pub downlink_count: u32,
+    pub dropped_count: u32,
+    pub uptime_secs: u32,
+}
+
+/// Link states as reported in HubStatus.
+pub mod link_state {
+    pub const UNPROVISIONED: u8 = 0;
+    pub const CONNECTING: u8 = 1;
+    pub const CONNECTED: u8 = 2;
+    pub const DISCONNECTED: u8 = 3;
+}
+
+pub fn parse_hub_status(payload: &[u8]) -> anyhow::Result<HubStatus> {
+    if payload.len() != 22 {
+        anyhow::bail!("HubStatus payload must be 22 bytes, got {}", payload.len());
+    }
+    Ok(HubStatus {
+        wifi_state: payload[0],
+        ip: [payload[1], payload[2], payload[3], payload[4]],
+        mqtt_state: payload[5],
+        uplink_count: u32::from_le_bytes([payload[6], payload[7], payload[8], payload[9]]),
+        downlink_count: u32::from_le_bytes([payload[10], payload[11], payload[12], payload[13]]),
+        dropped_count: u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]),
+        uptime_secs: u32::from_le_bytes([payload[18], payload[19], payload[20], payload[21]]),
+    })
 }
 
 /// Parsed response from the device.

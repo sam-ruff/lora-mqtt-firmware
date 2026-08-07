@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use serialport::{SerialPort, SerialPortType};
 
-use crate::protocol::{build_command, cobs_decode, cobs_encode, build_command_payload, parse_response, CommandId, Response, ResponseId};
+use crate::protocol::{
+    build_command, build_command_payload, cobs_decode, cobs_encode, parse_response, CommandId,
+    HubCommandId, Response, ResponseId,
+};
 
 /// USB vendor/product id of the Walkie-Textie firmware (dual CDC-ACM device).
 const USB_VID: u16 = 0x303A;
@@ -84,6 +87,47 @@ pub fn find_two_data_ports() -> Result<(String, String)> {
 pub fn resolve_port(port_arg: &str) -> Result<String> {
     if port_arg == "auto" {
         find_data_port()
+    } else {
+        Ok(port_arg.to_string())
+    }
+}
+
+/// Find the data port of a board whose USB serial starts with `prefix`
+/// ("WTH-" identifies a hub, "WT-" a node - the hub prefix is checked with
+/// an exact boundary so "WTH-" never matches as "WT-").
+pub fn find_data_port_with_serial_prefix(prefix: &str) -> Result<String> {
+    let ports = serialport::available_ports()?;
+    for port_info in ports {
+        let SerialPortType::UsbPort(usb) = &port_info.port_type else {
+            continue;
+        };
+        if usb.vid != USB_VID || usb.pid != USB_PID || usb.interface != Some(0) {
+            continue;
+        }
+        let Some(serial) = usb.serial_number.as_deref() else {
+            continue;
+        };
+        if !serial.starts_with(prefix) {
+            continue;
+        }
+        // "WT-" must not claim a hub's "WTH-" serial.
+        if prefix == "WT-" && serial.starts_with("WTH-") {
+            continue;
+        }
+        let responds = DeviceClient::new(&port_info.port_name, 115200)
+            .map(|mut client| client.wait_ready(Duration::from_secs(2)).is_ok())
+            .unwrap_or(false);
+        if responds {
+            return Ok(port_info.port_name);
+        }
+    }
+    anyhow::bail!("No responding board with USB serial prefix {prefix:?} found")
+}
+
+/// Resolve a port argument against a USB serial prefix when set to "auto".
+pub fn resolve_port_with_prefix(port_arg: &str, prefix: &str) -> Result<String> {
+    if port_arg == "auto" {
+        find_data_port_with_serial_prefix(prefix)
     } else {
         Ok(port_arg.to_string())
     }
@@ -372,5 +416,34 @@ impl DeviceClient {
     /// Returns the port path for re-opening.
     pub fn port_name(&self) -> Result<String> {
         Ok(self.port.name().unwrap_or_default())
+    }
+
+    /// Send a hub provisioning/status command and wait for its reply.
+    pub fn send_hub_command(&mut self, cmd_id: HubCommandId, payload: &[u8]) -> Result<Response> {
+        let raw = build_command_payload(cmd_id as u8, payload);
+        let encoded = cobs_encode(&raw);
+        self.port.write_all(&encoded)?;
+        self.port.flush()?;
+        self.read_command_response_resync()
+    }
+
+    /// Send a hub set command and require a ConfigAck with status Ok (0).
+    pub fn expect_config_ack(&mut self, cmd_id: HubCommandId, payload: &[u8]) -> Result<()> {
+        let response = self.send_hub_command(cmd_id, payload)?;
+        if response.resp_id != ResponseId::ConfigAck {
+            anyhow::bail!("Expected ConfigAck, got {:?}", response.resp_id);
+        }
+        match response.payload.first() {
+            Some(0) => Ok(()),
+            other => anyhow::bail!("ConfigAck status {:?} (0 = Ok expected)", other),
+        }
+    }
+
+    /// Reboot the device (fire and forget; no response is sent).
+    pub fn reboot(&mut self) -> Result<()> {
+        let frame = build_command(CommandId::Reboot, &[]);
+        self.port.write_all(&frame)?;
+        self.port.flush()?;
+        Ok(())
     }
 }
