@@ -60,7 +60,6 @@ pub enum ResponseMessage {
     /// Command response - should be filtered by source
     Command {
         source: CommandSource,
-        #[allow(dead_code)]
         sequence_id: u16,
         response: Response,
     },
