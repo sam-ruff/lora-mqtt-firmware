@@ -12,18 +12,6 @@ name = "lora-tests"
 path = "src/lora_tests.rs"
 
 [[bin]]
-name = "ble-tests"
-path = "src/ble_tests.rs"
-
-[[bin]]
-name = "ble-serial-tests"
-path = "src/ble_serial_tests.rs"
-
-[[bin]]
-name = "ble-ble-tests"
-path = "src/ble_ble_tests.rs"
-
-[[bin]]
 name = "duty-cycle-tests"
 path = "src/duty_cycle_tests.rs"
 
@@ -46,10 +34,3 @@ anyhow = "1.0"
 
 # Coloured output
 colored = "2.0"
-
-# BLE communication (for ble-serial-tests)
-btleplug = "0.11"
-uuid = "1.0"
-tokio = { version = "1.0", features = ["rt-multi-thread", "time", "macros"] }
-futures = "0.3"
-tokio-stream = "0.1"

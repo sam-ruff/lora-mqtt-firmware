@@ -15,7 +15,7 @@
 
 set -e
 
-TARGET_BUILD="target/xtensa-esp32s3-none-elf/release/walkie-textie-rust-firmware"
+TARGET_BUILD="target/xtensa-esp32s3-none-elf/release/walkie-textie-hub-firmware"
 
 # Parse ports from arguments
 PORTS=("$@")
@@ -113,8 +113,8 @@ if [ ${#FAILED[@]} -eq 0 ]; then
     echo "IMPORTANT: power-cycle each board now (unplug and replug, do NOT hold"
     echo "BOOT). These boards use the ESP32-S3 native USB-Serial-JTAG, which cannot"
     echo "be reset into the app from the host, so they stay in ROM download mode"
-    echo "until power-cycled. A running board shows up as 'Walkie-Textie Dual CDC'"
-    echo "and advertises over Bluetooth as 'WalkieTextie-XXXXXX'."
+    echo "until power-cycled. A running board shows up as 'Walkie-Textie Hub'"
+    echo "with USB serial 'WTH-XXXXXX'."
 else
     echo "Flashing failed for: ${FAILED[*]}"
     echo ""

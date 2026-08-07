@@ -30,7 +30,6 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_hal::Async;
 use static_cell::StaticCell;
 
-mod ble;
 mod config;
 mod debug;
 mod dispatcher;
@@ -56,12 +55,12 @@ static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
 static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
 static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
 /// Backing store for the USB serial string, which embassy-usb borrows for the
-/// device's lifetime ("WT-" plus the 3-byte device id as hex).
-static USB_SERIAL: StaticCell<[u8; 9]> = StaticCell::new();
+/// device's lifetime ("WTH-" plus the 3-byte device id as hex).
+static USB_SERIAL: StaticCell<[u8; 10]> = StaticCell::new();
 
 #[esp_hal::main]
 fn main() -> ! {
-    // Initialise heap allocator for BLE support (64KB - BLE requires significant heap)
+    // Heap for the radio subsystem (WiFi driver buffers must live in internal RAM)
     esp_alloc::heap_allocator!(size: 64 * 1024);
 
     let peripherals = esp_hal::init(esp_hal::Config::default());
@@ -107,11 +106,11 @@ fn main() -> ! {
     // Create LoRa driver
     let lora_driver = Sx1262Driver::new(spi, lora_pins);
 
-    // Read unique device ID from eFuse MAC address (last 3 bytes). Used for both
-    // the USB serial and the BLE advertised name so each board is distinct.
+    // Read unique device ID from eFuse MAC address (last 3 bytes). Used for the
+    // USB serial and the MQTT client id so each board is distinct.
     let mac = esp_hal::efuse::Efuse::read_base_mac_address();
     let device_id: [u8; 3] = [mac[3], mac[4], mac[5]];
-    let usb_serial = format_usb_serial(USB_SERIAL.init([0u8; 9]), device_id);
+    let usb_serial = format_usb_serial(USB_SERIAL.init([0u8; 10]), device_id);
 
     // Configure USB OTG with dual CDC-ACM (data + debug ports)
     let usb = Usb::new(peripherals.USB0, peripherals.GPIO20, peripherals.GPIO19);
@@ -130,7 +129,7 @@ fn main() -> ! {
     // Build USB device with dual CDC-ACM
     let mut usb_config = embassy_usb::Config::new(0x303A, 0x1001);
     usb_config.manufacturer = Some("Walkie-Textie");
-    usb_config.product = Some("Walkie-Textie Dual CDC");
+    usb_config.product = Some("Walkie-Textie Hub");
     usb_config.serial_number = Some(usb_serial);
     usb_config.max_power = 100;
     usb_config.max_packet_size_0 = 64;
@@ -151,49 +150,34 @@ fn main() -> ! {
     // Build the USB device
     let usb_device = builder.build();
 
-    // Initialise esp-radio for BLE support (must be after esp_rtos::start)
-    let radio_controller = RADIO_CONTROLLER.init(
+    // Initialise esp-radio (must be after esp_rtos::start); the WiFi driver
+    // borrows this controller.
+    let _radio_controller = RADIO_CONTROLLER.init(
         esp_radio::init().expect("Failed to initialize esp-radio")
     );
-
-    // Create BLE connector (ownership is passed to ExternalController)
-    let ble_connector = esp_radio::ble::controller::BleConnector::new(
-        radio_controller,
-        peripherals.BT,
-        esp_radio::ble::Config::default(),
-    ).expect("Failed to initialize BLE connector");
-
-    // Wrap in ExternalController for trouble-host compatibility
-    let controller: trouble_host::prelude::ExternalController<_, 10> =
-        trouble_host::prelude::ExternalController::new(ble_connector);
 
     // Create and run the embassy executor
     let executor = EXECUTOR.init(esp_rtos::embassy::Executor::new());
     executor.run(|spawner| {
-        spawner.must_spawn(async_main(spawner, usb_device, data_cdc, debug_cdc, lora_driver, led, controller, device_id));
+        spawner.must_spawn(async_main(spawner, usb_device, data_cdc, debug_cdc, lora_driver, led, device_id));
     })
 }
 
-/// Render the USB serial as `WT-XXXXXX` from the 3-byte device id, writing into
+/// Render the USB serial as `WTH-XXXXXX` from the 3-byte device id, writing into
 /// the caller-owned buffer so it can outlive `main` for the USB descriptor.
-fn format_usb_serial(buf: &'static mut [u8; 9], device_id: [u8; 3]) -> &'static str {
+fn format_usb_serial(buf: &'static mut [u8; 10], device_id: [u8; 3]) -> &'static str {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     buf[0] = b'W';
     buf[1] = b'T';
-    buf[2] = b'-';
+    buf[2] = b'H';
+    buf[3] = b'-';
     for (i, byte) in device_id.iter().enumerate() {
-        buf[3 + i * 2] = HEX[(byte >> 4) as usize];
-        buf[4 + i * 2] = HEX[(byte & 0x0F) as usize];
+        buf[4 + i * 2] = HEX[(byte >> 4) as usize];
+        buf[5 + i * 2] = HEX[(byte & 0x0F) as usize];
     }
     // Only ASCII was written, so this never falls back.
-    core::str::from_utf8(buf).unwrap_or("WT-000000")
+    core::str::from_utf8(buf).unwrap_or("WTH-000000")
 }
-
-/// Type alias for the BLE controller
-type BleController = trouble_host::prelude::ExternalController<
-    esp_radio::ble::controller::BleConnector<'static>,
-    10,
->;
 
 /// Type alias for the USB driver
 type UsbDriver = Driver<'static>;
@@ -215,7 +199,6 @@ async fn async_main(
         Input<'static>,
     >,
     led: Output<'static>,
-    ble_controller: BleController,
     device_id: [u8; 3],
 ) {
     // Get channel handles
@@ -242,7 +225,7 @@ async fn async_main(
     spawner.spawn(debug_writer_wrapper(debug_tx)).unwrap();
 
     // Log startup message
-    debug!("Walkie-Textie v{}.{}.{} starting...",
+    debug!("Walkie-Textie Hub v{}.{}.{} starting...",
         crate::config::protocol::VERSION_MAJOR,
         crate::config::protocol::VERSION_MINOR,
         crate::config::protocol::VERSION_PATCH
@@ -254,7 +237,6 @@ async fn async_main(
     spawner.spawn(admin_wrapper(admin_receiver)).unwrap();
     spawner.spawn(lora_wrapper(lora_driver, command_receiver, led_sender)).unwrap();
     spawner.spawn(led_wrapper(led, led_receiver)).unwrap();
-    spawner.spawn(ble_wrapper(ble_controller, device_id)).unwrap();
     debug!("All tasks started");
 }
 
@@ -295,12 +277,6 @@ async fn admin_wrapper(receiver: AdminReceiver) {
 #[embassy_executor::task]
 async fn led_wrapper(led: Output<'static>, receiver: LedReceiver) {
     tasks::led_task(led, receiver).await;
-}
-
-/// Wrapper task for BLE connectivity
-#[embassy_executor::task]
-async fn ble_wrapper(controller: BleController, device_id: [u8; 3]) {
-    tasks::ble_task(controller, device_id).await;
 }
 
 /// Wrapper task for LoRa operations

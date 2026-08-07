@@ -24,9 +24,7 @@ const COMMAND_CHANNEL_SIZE: usize = 8;
 pub enum CommandSource {
     /// Command received via serial/UART
     Serial,
-    /// Command received via BLE
-    Ble,
-    /// Command received via WiFi (future)
+    /// Command received via WiFi (MQTT downlink)
     #[allow(dead_code)]
     WiFi,
 }
@@ -62,7 +60,7 @@ pub enum ResponseMessage {
 
 /// Global channel for commands from all sources
 ///
-/// Multiple producers (serial, BLE, WiFi) send commands here.
+/// Multiple producers (serial, WiFi) send commands here.
 /// Single consumer (dispatcher) receives and executes them.
 #[cfg(feature = "embedded")]
 pub static COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, CommandEnvelope, COMMAND_CHANNEL_SIZE> =
@@ -70,12 +68,12 @@ pub static COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, CommandEnvelope, CO
 
 /// Unified channel for all responses (command responses + unsolicited)
 ///
-/// Uses PubSubChannel so multiple subscribers (serial, BLE) can receive messages.
-/// Each subscriber filters based on ResponseMessage type:
+/// Uses PubSubChannel so multiple subscribers (serial, MQTT bridge) can receive
+/// messages. Each subscriber filters based on ResponseMessage type:
 /// - Command responses: only accepted if source matches the subscriber's interface
 /// - Unsolicited: always accepted by all subscribers
 ///
-/// Parameters: CAP=8 messages, SUBS=2 subscribers (serial, BLE), PUBS=1 publisher (lora_task)
+/// Parameters: CAP=8 messages, SUBS=2 subscribers (serial, MQTT bridge), PUBS=1 publisher (lora_task)
 #[cfg(feature = "embedded")]
 pub static RESPONSE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ResponseMessage, 8, 2, 1> =
     PubSubChannel::new();
