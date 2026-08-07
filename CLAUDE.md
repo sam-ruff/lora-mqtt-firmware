@@ -59,7 +59,17 @@ USB D+ GPIO20 / D- GPIO19. SPI2 at 1 MHz Mode 0.
 - Power-cycle after every flash: the board stays in ROM download mode until
   unplugged (native USB-Serial-JTAG). A running hub shows USB serial
   `LMH-XXXXXX`; the node firmware shows `WT-XXXXXX` - the hub integration
-  tests tell boards apart by that prefix.
+  tests tell boards apart by that prefix. The running app owns the USB port
+  (embassy-usb OTG), so espflash cannot reach the ROM until the board is
+  replugged with BOOT held.
+- espflash reads `espflash.toml` from the CURRENT DIRECTORY, and a
+  bootloader path that does not exist fails as a misleading "Error while
+  connecting to device", not a missing-file error. The override is
+  commented out here; only enable it after building `bootloader/`.
+- USB CDC frames must never end on a full 64-byte packet: bulk transfers
+  only complete on a short packet, so `cdc_io.rs` caps writes at 63 bytes.
+  Hit on hardware when a response's COBS size landed exactly on 64 and the
+  host held it undelivered indefinitely.
 - Debug logs stream on the second CDC port (interface 2, 115200): WiFi/MQTT
   state changes, `LoRa RX/TX`, `Gateway ...` lines. The port re-enumerates on
   every reboot.
