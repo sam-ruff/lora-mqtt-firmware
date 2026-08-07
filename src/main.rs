@@ -76,7 +76,7 @@ static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
 static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
 static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
 /// Backing store for the USB serial string, which embassy-usb borrows for the
-/// device's lifetime ("WTH-" plus the 3-byte device id as hex).
+/// device's lifetime ("LMH-" plus the 3-byte device id as hex).
 static USB_SERIAL: StaticCell<[u8; 10]> = StaticCell::new();
 
 #[esp_hal::main]
@@ -151,8 +151,8 @@ fn main() -> ! {
 
     // Build USB device with dual CDC-ACM
     let mut usb_config = embassy_usb::Config::new(0x303A, 0x1001);
-    usb_config.manufacturer = Some("Walkie-Textie");
-    usb_config.product = Some("Walkie-Textie Hub");
+    usb_config.manufacturer = Some("LoRaMqttHub");
+    usb_config.product = Some("LoRaMqttHub");
     usb_config.serial_number = Some(usb_serial);
     usb_config.max_power = 100;
     usb_config.max_packet_size_0 = 64;
@@ -239,12 +239,12 @@ fn main() -> ! {
     })
 }
 
-/// Render the USB serial as `WTH-XXXXXX` from the 3-byte device id, writing into
+/// Render the USB serial as `LMH-XXXXXX` from the 3-byte device id, writing into
 /// the caller-owned buffer so it can outlive `main` for the USB descriptor.
 fn format_usb_serial(buf: &'static mut [u8; 10], device_id: [u8; 3]) -> &'static str {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    buf[0] = b'W';
-    buf[1] = b'T';
+    buf[0] = b'L';
+    buf[1] = b'M';
     buf[2] = b'H';
     buf[3] = b'-';
     for (i, byte) in device_id.iter().enumerate() {
@@ -252,7 +252,7 @@ fn format_usb_serial(buf: &'static mut [u8; 10], device_id: [u8; 3]) -> &'static
         buf[5 + i * 2] = HEX[(byte & 0x0F) as usize];
     }
     // Only ASCII was written, so this never falls back.
-    core::str::from_utf8(buf).unwrap_or("WTH-000000")
+    core::str::from_utf8(buf).unwrap_or("LMH-000000")
 }
 
 /// Type alias for the USB driver
@@ -339,7 +339,7 @@ async fn async_main(spawner: Spawner, board: Board) {
     spawner.spawn(debug_writer_wrapper(debug_tx)).unwrap();
 
     // Log startup message
-    debug!("Walkie-Textie Hub v{}.{}.{} starting...",
+    debug!("LoRaMqttHub v{}.{}.{} starting...",
         crate::config::protocol::VERSION_MAJOR,
         crate::config::protocol::VERSION_MINOR,
         crate::config::protocol::VERSION_PATCH

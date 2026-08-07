@@ -4,8 +4,8 @@ import { expect, test } from '@playwright/test';
 
 test('config page loads with the setup form', async ({ page }) => {
   await page.goto('/');
-  await expect(page).toHaveTitle('Walkie-Textie Hub');
-  await expect(page.getByRole('heading', { name: 'Walkie-Textie Hub setup' })).toBeVisible();
+  await expect(page).toHaveTitle('LoRaMqttHub');
+  await expect(page.getByRole('heading', { name: 'LoRaMqttHub setup' })).toBeVisible();
   await expect(page.locator('input[name="wifi_ssid"]')).toBeVisible();
   await expect(page.locator('input[name="wifi_password"]')).toBeVisible();
   await expect(page.locator('input[name="mqtt_host"]')).toBeVisible();

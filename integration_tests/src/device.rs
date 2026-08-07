@@ -93,8 +93,7 @@ pub fn resolve_port(port_arg: &str) -> Result<String> {
 }
 
 /// Find the data port of a board whose USB serial starts with `prefix`
-/// ("WTH-" identifies a hub, "WT-" a node - the hub prefix is checked with
-/// an exact boundary so "WTH-" never matches as "WT-").
+/// ("LMH-" identifies a hub, "WT-" a walkie-textie node).
 pub fn find_data_port_with_serial_prefix(prefix: &str) -> Result<String> {
     let ports = serialport::available_ports()?;
     for port_info in ports {
@@ -108,10 +107,6 @@ pub fn find_data_port_with_serial_prefix(prefix: &str) -> Result<String> {
             continue;
         };
         if !serial.starts_with(prefix) {
-            continue;
-        }
-        // "WT-" must not claim a hub's "WTH-" serial.
-        if prefix == "WT-" && serial.starts_with("WTH-") {
             continue;
         }
         let responds = DeviceClient::new(&port_info.port_name, 115200)

@@ -1,11 +1,11 @@
 [package]
-name = "walkie-textie-hub-firmware"
+name = "lora-mqtt-hub-firmware"
 version = "0.1.0"
 edition = "2021"
 
 # Only build the binary for embedded target
 [[bin]]
-name = "walkie-textie-hub-firmware"
+name = "lora-mqtt-hub-firmware"
 path = "src/main.rs"
 required-features = ["embedded"]
 

@@ -23,12 +23,12 @@ echo "Scanning for the hub hotspot on $WIFI_IFACE..."
 HUB_AP=""
 for _ in $(seq 1 12); do
     HUB_AP=$(nmcli -t -f SSID device wifi list ifname "$WIFI_IFACE" --rescan yes 2>/dev/null \
-        | grep '^WalkieTextieHub-' | head -1 || true)
+        | grep '^LoRaMqttHub-' | head -1 || true)
     [ -n "$HUB_AP" ] && break
     sleep 5
 done
 if [ -z "$HUB_AP" ]; then
-    echo "No WalkieTextieHub-* hotspot found. Is the hub powered and unprovisioned?"
+    echo "No LoRaMqttHub-* hotspot found. Is the hub powered and unprovisioned?"
     exit 1
 fi
 echo "Joining $HUB_AP..."

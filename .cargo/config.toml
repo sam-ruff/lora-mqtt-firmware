@@ -25,7 +25,7 @@ ESP_LOG = "INFO"
 # Build commands (run 'source ~/export-esp.sh' first):
 # - Host tests: cargo t
 # - Embedded build: cargo +esp build --features embedded --release -Zbuild-std=core,alloc
-# - Flash: espflash flash --port /dev/ttyACM0 target/xtensa-esp32s3-none-elf/release/walkie-textie-hub-firmware
+# - Flash: espflash flash --port /dev/ttyACM0 target/xtensa-esp32s3-none-elf/release/lora-mqtt-hub-firmware
 #
 # Integration tests (auto-detect ports by default):
 # - Single device: cargo integration

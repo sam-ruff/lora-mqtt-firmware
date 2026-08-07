@@ -1223,6 +1223,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
+name = "lora-mqtt-hub-firmware"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "critical-section",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-io 0.6.1",
+ "embedded-io-async 0.6.1",
+ "embedded-storage",
+ "embedded-storage-async",
+ "esp-alloc",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "esp-storage",
+ "futures",
+ "heapless 0.8.0",
+ "hub-protocol",
+ "postcard",
+ "rust-mqtt",
+ "sequential-storage",
+ "serde",
+ "serde-json-core",
+ "static_cell",
+ "wt-protocol",
+]
+
+[[package]]
 name = "managed"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1821,45 +1860,6 @@ name = "void"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
-
-[[package]]
-name = "walkie-textie-hub-firmware"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "critical-section",
- "embassy-embedded-hal",
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-sync 0.7.2",
- "embassy-time",
- "embassy-usb",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "embedded-io 0.6.1",
- "embedded-io-async 0.6.1",
- "embedded-storage",
- "embedded-storage-async",
- "esp-alloc",
- "esp-backtrace",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-radio",
- "esp-rtos",
- "esp-storage",
- "futures",
- "heapless 0.8.0",
- "hub-protocol",
- "postcard",
- "rust-mqtt",
- "sequential-storage",
- "serde",
- "serde-json-core",
- "static_cell",
- "wt-protocol",
-]
 
 [[package]]
 name = "winapi-util"

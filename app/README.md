@@ -1,6 +1,6 @@
-# Walkie-Textie Hub configurator
+# LoRaMqttHub configurator
 
-Phone app for setting up a Walkie-Textie hub: join the hub's provisioning
+Phone app for setting up a LoRaMqttHub: join the hub's provisioning
 hotspot, connect, and configure WiFi, MQTT and the LoRaWAN gateway. It drives
 the same JSON API as the hub's captive portal.
 

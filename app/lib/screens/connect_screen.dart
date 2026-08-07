@@ -43,7 +43,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Widget build(BuildContext context) {
     final service = context.watch<HubService>();
     return Scaffold(
-      appBar: AppBar(title: const Text('Walkie-Textie Hub')),
+      appBar: AppBar(title: const Text('LoRaMqttHub')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -61,7 +61,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   Text('An unconfigured hub broadcasts its own WiFi hotspot.'),
                   SizedBox(height: 8),
                   Text('Open your phone\'s WiFi settings and join the network '
-                      'named WalkieTextieHub followed by the hub\'s id.'),
+                      'named LoRaMqttHub followed by the hub\'s id.'),
                   SizedBox(height: 8),
                   Text('Come back here and connect. If the hub is already on '
                       'your network, enter its address instead.'),

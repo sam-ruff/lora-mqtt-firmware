@@ -1,4 +1,4 @@
-# Walkie-Textie Hub firmware
+# LoRaMqttHub firmware
 
 ESP32-S3 + Wio-SX1262 hub firmware (Rust/Embassy), forked from the node
 firmware `walkie-textie-rust-firmware` (kept as the `upstream` git remote so
@@ -58,7 +58,7 @@ USB D+ GPIO20 / D- GPIO19. SPI2 at 1 MHz Mode 0.
 
 - Power-cycle after every flash: the board stays in ROM download mode until
   unplugged (native USB-Serial-JTAG). A running hub shows USB serial
-  `WTH-XXXXXX`; the node firmware shows `WT-XXXXXX` - the hub integration
+  `LMH-XXXXXX`; the node firmware shows `WT-XXXXXX` - the hub integration
   tests tell boards apart by that prefix.
 - Debug logs stream on the second CDC port (interface 2, 115200): WiFi/MQTT
   state changes, `LoRa RX/TX`, `Gateway ...` lines. The port re-enumerates on

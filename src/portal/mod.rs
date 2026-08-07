@@ -2,7 +2,7 @@
 //!
 //! When the hub has no WiFi credentials (or repeatedly fails to join the
 //! configured network), the WiFi task starts an open access point named
-//! `WalkieTextieHub-XXXXXX` instead of the station. A phone that joins gets
+//! `LoRaMqttHub-XXXXXX` instead of the station. A phone that joins gets
 //! an address from the one-lease DHCP server, every DNS name resolves to the
 //! portal, and the embedded page (or an app speaking the JSON API) sets WiFi,
 //! MQTT, mode and gateway settings. Saving persists to flash and restarts

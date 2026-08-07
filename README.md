@@ -1,4 +1,4 @@
-# Walkie-Textie Hub
+# LoRaMqttHub
 
 Firmware that turns the Walkie-Textie radio board (ESP32-S3 + Wio-SX1262) into
 a mains-powered hub. It has two operating modes, selected by configuration:
@@ -27,13 +27,13 @@ cargo +esp build --features embedded --release -Zbuild-std=core,alloc
 After flashing, power-cycle the board (unplug and replug, do not hold BOOT).
 The ESP32-S3 native USB-Serial-JTAG cannot be reset into the application from
 the host, so the board stays in ROM download mode until power-cycled. A
-running hub enumerates as "Walkie-Textie Hub" with USB serial `WTH-XXXXXX`
+running hub enumerates as "LoRaMqttHub" with USB serial `LMH-XXXXXX`
 and exposes two CDC ports: data (interface 0) and debug log (interface 2).
 
 ## Configuration
 
 An unprovisioned hub (no WiFi credentials) starts its own open hotspot,
-`WalkieTextieHub-XXXXXX`. Join it with a phone and the captive portal at
+`LoRaMqttHub-XXXXXX`. Join it with a phone and the captive portal at
 `http://192.168.4.1` opens: set the WiFi network, MQTT broker, operating mode
 and gateway settings, save, and the hub restarts onto your network. The same
 portal appears again if the configured network stays unreachable (wrong
