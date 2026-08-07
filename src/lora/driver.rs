@@ -47,6 +47,12 @@ mod reg {
     pub const OCP_CONFIGURATION: u16 = 0x08E7;
     /// PA clamping threshold (datasheet errata 15.2)
     pub const TX_CLAMP_CONFIG: u16 = 0x08D8;
+    /// LoRa sync word MSB (private 0x14 / public 0x34)
+    pub const LORA_SYNC_WORD_MSB: u16 = 0x0740;
+    /// LoRa sync word LSB (private 0x24 / public 0x44)
+    pub const LORA_SYNC_WORD_LSB: u16 = 0x0741;
+    /// IQ polarity setup (datasheet errata 15.4)
+    pub const IQ_POLARITY: u16 = 0x0736;
 }
 
 /// Maximum payload length the modem can carry in one packet.
@@ -312,6 +318,25 @@ where
         self.write_register(reg::OCP_CONFIGURATION, ocp_value).await
     }
 
+    /// Write the LoRa sync word registers.
+    ///
+    /// Written unconditionally (the private value matches the power-on
+    /// default) so behaviour is deterministic across mode switches.
+    async fn set_sync_word(&mut self, sync_word: crate::lora::traits::SyncWord) -> Result<(), LoraError> {
+        let (msb, lsb) = sync_word.register_bytes();
+        self.write_register(reg::LORA_SYNC_WORD_MSB, msb).await?;
+        self.write_register(reg::LORA_SYNC_WORD_LSB, lsb).await
+    }
+
+    /// Apply datasheet errata 15.4 (Optimizing the Inverted IQ Operation):
+    /// bit 2 of register 0x0736 must be cleared for inverted IQ and set for
+    /// standard IQ, or sensitivity degrades.
+    async fn apply_iq_polarity_workaround(&mut self, iq_inverted: bool) -> Result<(), LoraError> {
+        let value = self.read_register(reg::IQ_POLARITY).await?;
+        let fixed = if iq_inverted { value & !0x04 } else { value | 0x04 };
+        self.write_register(reg::IQ_POLARITY, fixed).await
+    }
+
     /// Set standby mode.
     ///
     /// Clears `in_continuous_rx` so every path that drops the radio out of
@@ -378,14 +403,20 @@ where
         self.write_command(cmd::SET_MODULATION_PARAMS, &data).await
     }
 
-    /// Set packet parameters
+    /// Set packet parameters from the active config (explicit header always;
+    /// preamble length, CRC and IQ polarity are config-driven for LoRaWAN).
     async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), LoraError> {
+        let (preamble, crc_on, iq_inverted) = match self.config.as_ref() {
+            Some(config) => (config.preamble_len, config.crc_on, config.iq_inverted),
+            None => (8, true, false),
+        };
         let data = [
-            0x00, 0x08, // Preamble length: 8 symbols
+            (preamble >> 8) as u8,
+            preamble as u8,
             0x00, // Explicit header
             payload_len,
-            0x01, // CRC on
-            0x00, // Standard IQ
+            crc_on as u8,
+            iq_inverted as u8,
         ];
         self.write_command(cmd::SET_PACKET_PARAMS, &data).await
     }
@@ -542,6 +573,58 @@ where
         self.get_irq_status().await
     }
 
+    /// Stage a transmission: validate, drop to standby, write packet params
+    /// and payload, and arm the TX-done interrupt. `fire_tx` starts it.
+    ///
+    /// Split from `transmit` so a LoRaWAN downlink can do the slow setup
+    /// ahead of its window and fire at the precise target instant.
+    pub async fn prepare_tx(&mut self, data: &[u8]) -> Result<(), LoraError> {
+        if !self.initialised {
+            return Err(LoraError::NotInitialised);
+        }
+
+        // The modem's length field is one byte: reject anything over 255, or
+        // the length wraps (256 -> 0) and an empty packet goes on the air.
+        if data.is_empty() || data.len() > HW_MAX_PAYLOAD_LEN as usize {
+            return Err(LoraError::InvalidConfig);
+        }
+
+        // Set to standby (clears in_continuous_rx); arm_receive re-arms
+        // continuous RX afterwards.
+        self.set_standby_internal().await?;
+
+        // Set packet parameters with payload length
+        self.set_packet_params(data.len() as u8).await?;
+
+        // Write data to buffer
+        self.write_buffer(0x00, data).await?;
+
+        // Configure IRQ for TX done
+        self.configure_irq(irq::TX_DONE).await?;
+        self.clear_irq(0xFFFF).await
+    }
+
+    /// Start a prepared transmission (a single 4-byte SetTx command).
+    pub async fn fire_tx(&mut self) -> Result<(), LoraError> {
+        // Timeout 0 = no timeout
+        self.write_command(cmd::SET_TX, &[0x00, 0x00, 0x00]).await
+    }
+
+    /// Wait for a fired transmission to complete.
+    pub async fn wait_tx_done(&mut self) -> Result<(), LoraError> {
+        // Wait for TX done (10 second timeout)
+        let irq_status = self.wait_for_irq(10000).await?;
+
+        // Clear IRQ after reading (Semtech pattern)
+        self.clear_irq(irq_status).await?;
+
+        if irq_status & irq::TX_DONE != 0 {
+            Ok(())
+        } else {
+            Err(LoraError::TransmitFailed)
+        }
+    }
+
     /// Start continuous receive mode (like Arduino's startReceive)
     /// Puts the radio into RX mode with no timeout
     async fn start_receive_mode(&mut self) -> Result<(), LoraError> {
@@ -622,47 +705,10 @@ where
     }
 
     async fn transmit(&mut self, data: &[u8]) -> Result<(), LoraError> {
-        if !self.initialised {
-            return Err(LoraError::NotInitialised);
-        }
-
-        // The modem's length field is one byte: reject anything over 255, or
-        // the length wraps (256 -> 0) and an empty packet goes on the air.
-        if data.is_empty() || data.len() > HW_MAX_PAYLOAD_LEN as usize {
-            return Err(LoraError::InvalidConfig);
-        }
-
-        // Set to standby (clears in_continuous_rx); arm_receive re-arms
-        // continuous RX afterwards.
-        self.set_standby_internal().await?;
-
-        // Set packet parameters with payload length
-        self.set_packet_params(data.len() as u8).await?;
-
-        // Write data to buffer
-        self.write_buffer(0x00, data).await?;
-
-        // Configure IRQ for TX done
-        self.configure_irq(irq::TX_DONE).await?;
-        self.clear_irq(0xFFFF).await?;
-
-        // Start transmission (timeout 0 = no timeout)
-        self.write_command(cmd::SET_TX, &[0x00, 0x00, 0x00]).await?;
-
-        // Wait for TX done (10 second timeout)
-        let irq_status = self.wait_for_irq(10000).await?;
-
-        // Clear IRQ after reading (Semtech pattern)
-        self.clear_irq(irq_status).await?;
-
-        // NOTE: Don't call start_receive_mode() here.
-        // The lora_task will call arm_receive() which handles RX mode re-entry.
-
-        if irq_status & irq::TX_DONE != 0 {
-            Ok(())
-        } else {
-            Err(LoraError::TransmitFailed)
-        }
+        // NOTE: RX re-entry is the caller's job via arm_receive().
+        self.prepare_tx(data).await?;
+        self.fire_tx().await?;
+        self.wait_tx_done().await
     }
 
     async fn arm_receive(&mut self) -> Result<(), LoraError> {
@@ -681,12 +727,15 @@ where
         Ok(())
     }
 
-    async fn wait_rx_event(&mut self, timeout_ms: u32) -> Result<(), LoraError> {
+    async fn wait_rx_event(&mut self, timeout_ms: u32) -> Result<embassy_time::Instant, LoraError> {
         // Pure GPIO/timer wait - no SPI - so the caller may race this in a
         // select and drop it at any await point. On deadline return Timeout
         // WITHOUT touching the radio: a reception may be in flight and a
         // later poll picks up the completed packet.
-        self.wait_dio1(timeout_ms).await
+        self.wait_dio1(timeout_ms).await?;
+        // Captured before any SPI so downlink timing is anchored to the IRQ
+        // edge, not to how long the packet read takes.
+        Ok(embassy_time::Instant::now())
     }
 
     async fn read_packet(&mut self) -> Result<RxPacket, LoraError> {
@@ -722,6 +771,11 @@ where
 
         // Set modulation parameters
         self.set_modulation_params(config).await?;
+
+        // Sync word and the errata 15.4 IQ polarity fix accompany the
+        // modulation setup; packet params pick up CRC/IQ/preamble later.
+        self.set_sync_word(config.sync_word).await?;
+        self.apply_iq_polarity_workaround(config.iq_inverted).await?;
 
         // Configure Power Amplifier (must be called before SetTxParams)
         self.configure_pa().await?;
@@ -1097,6 +1151,118 @@ mod host_tests {
             writes.borrow().len(),
             writes_before,
             "the cancel-safe wait must not touch the SPI bus"
+        );
+    }
+
+    /// Value byte of the last WriteRegister (0x0D) to the given address.
+    fn last_register_value(writes: &[StdVec<u8>], addr: u16) -> Option<u8> {
+        writes
+            .iter()
+            .rev()
+            .find(|w| {
+                w.first() == Some(&cmd::WRITE_REGISTER)
+                    && w.get(1) == Some(&((addr >> 8) as u8))
+                    && w.get(2) == Some(&(addr as u8))
+            })
+            .and_then(|w| w.get(3).copied())
+    }
+
+    #[test]
+    fn default_config_writes_private_sync_word_and_standard_iq() {
+        embassy_time::MockDriver::get().reset();
+        let writes = Rc::new(RefCell::new(StdVec::new()));
+        let mut driver = build_driver(writes.clone());
+
+        run(driver.init()).expect("init should succeed");
+
+        let writes = writes.borrow();
+        assert_eq!(
+            last_register_value(&writes, reg::LORA_SYNC_WORD_MSB),
+            Some(0x14),
+            "default sync word MSB must be the private value"
+        );
+        assert_eq!(
+            last_register_value(&writes, reg::LORA_SYNC_WORD_LSB),
+            Some(0x24),
+            "default sync word LSB must be the private value"
+        );
+        // Errata 15.4: standard IQ sets bit 2 (mock registers read as 0).
+        assert_eq!(
+            last_register_value(&writes, reg::IQ_POLARITY),
+            Some(0x04),
+            "standard IQ must set bit 2 of register 0x0736"
+        );
+    }
+
+    #[test]
+    fn default_packet_params_are_byte_identical_to_the_original() {
+        embassy_time::MockDriver::get().reset();
+        let writes = Rc::new(RefCell::new(StdVec::new()));
+        let mut driver = build_driver(writes.clone());
+
+        run(driver.init()).expect("init should succeed");
+        let _ = run(driver.transmit(&[0x01, 0x02, 0x03]));
+
+        let writes = writes.borrow();
+        let params = writes
+            .iter()
+            .rposition(|w| w.first() == Some(&cmd::SET_PACKET_PARAMS))
+            .expect("packet params written for TX");
+        // The exact bytes the pre-LoRaWAN driver hard-coded: preamble 8,
+        // explicit header, length, CRC on, standard IQ.
+        assert_eq!(&writes[params][1..], &[0x00, 0x08, 0x00, 0x03, 0x01, 0x00]);
+    }
+
+    #[test]
+    fn lorawan_downlink_config_flips_sync_iq_and_crc() {
+        embassy_time::MockDriver::get().reset();
+        let writes = Rc::new(RefCell::new(StdVec::new()));
+        let mut driver = build_driver(writes.clone());
+
+        run(driver.init()).expect("init should succeed");
+
+        let downlink = LoraConfig {
+            sync_word: crate::lora::traits::SyncWord::Public,
+            iq_inverted: true,
+            crc_on: false,
+            preamble_len: 12,
+            ..LoraConfig::default()
+        };
+        run(driver.configure(&downlink)).expect("configure should succeed");
+        run(driver.prepare_tx(&[0xAA, 0xBB])).expect("prepare_tx should succeed");
+
+        let writes = writes.borrow();
+        assert_eq!(last_register_value(&writes, reg::LORA_SYNC_WORD_MSB), Some(0x34));
+        assert_eq!(last_register_value(&writes, reg::LORA_SYNC_WORD_LSB), Some(0x44));
+        // Errata 15.4: inverted IQ clears bit 2 (mock registers read as 0).
+        assert_eq!(last_register_value(&writes, reg::IQ_POLARITY), Some(0x00));
+
+        let params = writes
+            .iter()
+            .rposition(|w| w.first() == Some(&cmd::SET_PACKET_PARAMS))
+            .expect("packet params written by prepare_tx");
+        // Preamble 12, explicit header, length 2, CRC off, inverted IQ.
+        assert_eq!(&writes[params][1..], &[0x00, 0x0C, 0x00, 0x02, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn prepare_without_fire_never_reaches_set_tx() {
+        embassy_time::MockDriver::get().reset();
+        let writes = Rc::new(RefCell::new(StdVec::new()));
+        let mut driver = build_driver(writes.clone());
+
+        run(driver.init()).expect("init should succeed");
+        run(driver.prepare_tx(&[0x01])).expect("prepare_tx should succeed");
+
+        assert!(
+            first_index(&writes.borrow(), cmd::SET_TX).is_none(),
+            "prepare_tx must stage everything except SetTx"
+        );
+
+        run(driver.fire_tx()).expect("fire_tx should succeed");
+        assert!(
+            first_index(&writes.borrow(), cmd::SET_TX).is_some(),
+            "fire_tx must issue SetTx"
         );
     }
 }

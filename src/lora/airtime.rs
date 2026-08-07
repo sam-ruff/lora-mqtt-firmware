@@ -29,7 +29,8 @@ fn bandwidth_hz(bandwidth_khz: u32) -> u32 {
     }
 }
 
-/// Time on air in milliseconds (rounded up) for one LoRa packet.
+/// Time on air in milliseconds (rounded up) for one LoRa packet, with this
+/// firmware's default packet shape (8-symbol preamble, CRC on).
 ///
 /// `coding_rate` is the denominator (5-8 for 4/5 to 4/8); out-of-range values
 /// fall back to 4/5, matching the driver. Spreading factors are clamped to the
@@ -40,16 +41,38 @@ pub fn time_on_air_ms(
     coding_rate: u8,
     payload_len: usize,
 ) -> u32 {
+    time_on_air_ms_ext(
+        spreading_factor,
+        bandwidth_khz,
+        coding_rate,
+        payload_len,
+        PREAMBLE_SYMBOLS as u16,
+        true,
+    )
+}
+
+/// Time on air with an explicit preamble length and CRC setting (LoRaWAN
+/// downlinks use CRC off and the server may request a longer preamble).
+/// Header stays explicit, matching the driver.
+pub fn time_on_air_ms_ext(
+    spreading_factor: u8,
+    bandwidth_khz: u32,
+    coding_rate: u8,
+    payload_len: usize,
+    preamble_symbols: u16,
+    crc_on: bool,
+) -> u32 {
     let sf = spreading_factor.clamp(7, 12) as u32;
     let cr = match coding_rate {
         5..=8 => (coding_rate - 4) as u32,
         _ => 1,
     };
     let de = if ldro_enabled(sf as u8, bandwidth_khz) { 1u32 } else { 0 };
+    let crc_bits: i64 = if crc_on { 16 } else { 0 };
 
-    // Payload symbol count: 8 + max(ceil((8*PL - 4*SF + 28 + 16) / (4*(SF - 2*DE))) * (CR + 4), 0)
-    // with explicit header (IH = 0) and CRC on (+16).
-    let numerator = 8 * payload_len as i64 - 4 * sf as i64 + 28 + 16;
+    // Payload symbol count: 8 + max(ceil((8*PL - 4*SF + 28 + CRC) / (4*(SF - 2*DE))) * (CR + 4), 0)
+    // with explicit header (IH = 0).
+    let numerator = 8 * payload_len as i64 - 4 * sf as i64 + 28 + crc_bits;
     let denominator = (4 * (sf - 2 * de)) as i64;
     let blocks = if numerator > 0 {
         (numerator + denominator - 1) / denominator
@@ -59,7 +82,7 @@ pub fn time_on_air_ms(
     let payload_symbols = 8 + blocks as u32 * (cr + 4);
 
     // Total in quarter-symbols: the preamble adds 4.25 sync symbols.
-    let quarter_symbols = (PREAMBLE_SYMBOLS + payload_symbols) as u64 * 4 + 17;
+    let quarter_symbols = (preamble_symbols as u32 + payload_symbols) as u64 * 4 + 17;
     let symbol_time_us = ((1u64 << sf) * 1_000_000) / bandwidth_hz(bandwidth_khz) as u64;
     let total_us = quarter_symbols * symbol_time_us / 4;
 
@@ -119,5 +142,39 @@ mod tests {
         // valid airtime rather than panicking.
         assert_eq!(time_on_air_ms(0, 250, 0, 10), time_on_air_ms(7, 250, 5, 10));
         assert_eq!(time_on_air_ms(200, 250, 8, 10), time_on_air_ms(12, 250, 8, 10));
+    }
+
+    #[test]
+    fn ext_with_defaults_matches_the_plain_function() {
+        for (sf, bw, cr, len) in [(7, 125, 5, 13), (11, 250, 8, 255), (12, 250, 8, 20)] {
+            assert_eq!(
+                time_on_air_ms(sf, bw, cr, len),
+                time_on_air_ms_ext(sf, bw, cr, len, 8, true)
+            );
+        }
+    }
+
+    #[test]
+    fn crc_off_downlink_matches_known_value() {
+        // Canonical LoRa calculator: SF12, BW125, CR4/5, 17-byte payload,
+        // 8-symbol preamble, explicit header, CRC off = 1155.072 ms.
+        assert_eq!(time_on_air_ms_ext(12, 125, 5, 17, 8, false), 1156);
+    }
+
+    #[test]
+    fn crc_off_never_exceeds_crc_on() {
+        for len in [0usize, 12, 51, 255] {
+            let with_crc = time_on_air_ms_ext(9, 125, 5, len, 8, true);
+            let without = time_on_air_ms_ext(9, 125, 5, len, 8, false);
+            assert!(without <= with_crc, "len {len}: {without} > {with_crc}");
+        }
+    }
+
+    #[test]
+    fn longer_preamble_costs_more() {
+        let short = time_on_air_ms_ext(7, 125, 5, 20, 8, true);
+        let long = time_on_air_ms_ext(7, 125, 5, 20, 16, true);
+        // Eight extra SF7/BW125 symbols are 8 x 1.024 ms.
+        assert_eq!(long - short, 8);
     }
 }
