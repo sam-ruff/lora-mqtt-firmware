@@ -119,8 +119,10 @@ fn run(args: &Args) -> Result<()> {
     );
 
     // Answer keepalives so the gateway sees the server as alive, and catch
-    // the stat report which arrives within 30 s.
-    let stat = wait_stat(&socket, Duration::from_secs(60))?;
+    // the stat report (every 30 s, but the first one lands a full period
+    // after the gateway's network comes up, which can trail the PULL_DATA
+    // detection by most of a minute on a fresh boot).
+    let stat = wait_stat(&socket, Duration::from_secs(90))?;
     println!("  {} stat report: {}", "ok".green(), stat);
 
     // Immediate downlink must be accepted with TX_ACK NONE (the hub's debug

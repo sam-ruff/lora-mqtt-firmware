@@ -66,7 +66,13 @@ impl<'d, D: Driver<'d>> Write for CdcWriter<'d, D> {
         // write_packet errors outright on data longer than the 64-byte USB
         // endpoint packet, which silently dropped every frame over 64 bytes.
         // Cap the write and let write_all loop over the rest.
-        let n = buf.len().min(self.inner.max_packet_size() as usize);
+        //
+        // The cap is one UNDER the endpoint packet size: a bulk transfer only
+        // terminates on a short packet, so a frame whose tail lands exactly
+        // on the 64-byte boundary would sit undelivered in the host's CDC
+        // driver until unrelated later bytes flush it (seen on hardware as a
+        // response of exactly 64 encoded bytes never arriving).
+        let n = buf.len().min(self.inner.max_packet_size() as usize - 1);
         match self.inner.write_packet(&buf[..n]).await {
             Ok(()) => Ok(n),
             Err(_) => Err(CdcError),
