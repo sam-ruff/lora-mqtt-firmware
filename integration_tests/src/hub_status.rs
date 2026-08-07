@@ -1,0 +1,55 @@
+//! Print the hub's live status over USB serial - a quick diagnostic.
+//!
+//! Run: cargo hub-status
+
+mod device;
+mod protocol;
+
+use std::time::Duration;
+
+use anyhow::Result;
+use clap::Parser;
+
+use device::{resolve_port_with_prefix, DeviceClient};
+use protocol::{parse_hub_status, HubCommandId, ResponseId};
+
+#[derive(Parser)]
+struct Args {
+    #[arg(long, default_value = "auto")]
+    hub_port: String,
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    let port = resolve_port_with_prefix(&args.hub_port, "LMH-")?;
+    let mut hub = DeviceClient::new(&port, 115200)?;
+    hub.wait_ready(Duration::from_secs(5))?;
+
+    let version = hub.get_version(Duration::from_secs(3))?;
+    println!("hub {port} firmware v{}.{}.{}", version.0, version.1, version.2);
+
+    let response = hub.send_hub_command(HubCommandId::GetHubStatus, &[])?;
+    anyhow::ensure!(
+        response.resp_id == ResponseId::HubStatus,
+        "unexpected response {:?}",
+        response.resp_id
+    );
+    let status = parse_hub_status(&response.payload)?;
+    println!(
+        "wifi {} mqtt {} ip {}.{}.{}.{} up {} down {} dropped {} uptime {}s",
+        status.wifi_state,
+        status.mqtt_state,
+        status.ip[0],
+        status.ip[1],
+        status.ip[2],
+        status.ip[3],
+        status.uplink_count,
+        status.downlink_count,
+        status.dropped_count,
+        status.uptime_secs
+    );
+
+    let network = hub.send_hub_command(HubCommandId::GetNetworkConfig, &[])?;
+    println!("network config payload: {:02x?}", network.payload);
+    Ok(())
+}

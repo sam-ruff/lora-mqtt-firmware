@@ -76,6 +76,9 @@ async fn run(args: &Args) -> Result<()> {
     let result_topic = format!("wt/hub/{hub_id}/tx/result");
     client.subscribe(&rx_topic, QoS::AtLeastOnce).await?;
     client.subscribe(&result_topic, QoS::AtLeastOnce).await?;
+    // subscribe() only queues; pump the event loop until both SUBACKs land,
+    // otherwise a fast uplink can beat the subscription to the broker.
+    await_subacks(&mut eventloop, 2, 10).await?;
 
     // BLE side: connect to the node.
     println!("  scanning for BLE node {}...", args.ble_name);
@@ -83,6 +86,15 @@ async fn run(args: &Args) -> Result<()> {
         .await
         .context("could not connect to the node over BLE")?;
     println!("  {} connected to the node over BLE", "ok".green());
+
+    // Pin the node to the hub's radio settings: SF is runtime-adjustable and
+    // survives across sessions, so a stale value silently breaks the link.
+    let config = node
+        .send_command(protocol::CommandId::GetRadioConfig, &[], Duration::from_secs(10))
+        .await?;
+    println!("  node radio config payload: {:02x?}", config.payload);
+    node.set_spreading_factor(11, Duration::from_secs(10)).await?;
+    println!("  {} node pinned to SF11", "ok".green());
 
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -121,6 +133,9 @@ async fn run(args: &Args) -> Result<()> {
             format!(r#"{{"payload_hex":"{}","id":{nonce}}}"#, hex(downlink.as_bytes())),
         )
         .await?;
+    // publish() only queues; pump until the broker acknowledges it, because
+    // the BLE wait below does not poll the MQTT event loop.
+    await_puback(&mut eventloop, 10).await?;
     node.wait_for_rx_packet_matching(downlink.as_bytes(), Duration::from_secs(30))
         .await
         .context("node never heard the downlink over the air")?;
@@ -138,32 +153,71 @@ async fn run(args: &Args) -> Result<()> {
     );
     println!("  {} downlink: MQTT -> LoRa -> BLE with correlated result", "ok".green());
 
-    // Soak: alternate directions to shake out half-duplex races.
+    // Soak: alternate directions round after round. LoRa is a lossy medium
+    // and both radios are half-duplex, so each direction gets one retry; the
+    // hub's tx/result is asserted so a duty-cycle refusal cannot masquerade
+    // as air loss.
     for round in 0..args.rounds {
         let up = format!("e2e-soak-up-{nonce}-{round}");
-        let response = node.lora_tx(up.as_bytes(), Duration::from_secs(15)).await?;
-        anyhow::ensure!(
-            response.resp_id == ResponseId::TxComplete,
-            "soak round {round}: node TX failed"
-        );
-        wait_for_payload_containing(&mut eventloop, &rx_topic, &hex(up.as_bytes()), 30)
-            .await
-            .with_context(|| format!("soak round {round}: uplink lost"))?;
+        let mut delivered = false;
+        for attempt in 0..2 {
+            let response = node.lora_tx(up.as_bytes(), Duration::from_secs(15)).await?;
+            anyhow::ensure!(
+                response.resp_id == ResponseId::TxComplete,
+                "soak round {round}: node TX failed"
+            );
+            if wait_for_payload_containing(&mut eventloop, &rx_topic, &hex(up.as_bytes()), 20)
+                .await
+                .is_ok()
+            {
+                delivered = true;
+                if attempt > 0 {
+                    println!("  note: soak round {round} uplink needed a retry");
+                }
+                break;
+            }
+        }
+        anyhow::ensure!(delivered, "soak round {round}: uplink lost twice");
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         let down = format!("e2e-soak-down-{nonce}-{round}");
-        node.clear_buffer().await;
-        client
-            .publish(
-                &tx_topic,
-                QoS::AtLeastOnce,
-                false,
-                format!(r#"{{"payload_hex":"{}"}}"#, hex(down.as_bytes())),
-            )
-            .await?;
-        node.wait_for_rx_packet_matching(down.as_bytes(), Duration::from_secs(30))
-            .await
-            .with_context(|| format!("soak round {round}: downlink lost"))?;
+        let mut delivered = false;
+        for attempt in 0..2 {
+            node.clear_buffer().await;
+            client
+                .publish(
+                    &tx_topic,
+                    QoS::AtLeastOnce,
+                    false,
+                    format!(r#"{{"payload_hex":"{}"}}"#, hex(down.as_bytes())),
+                )
+                .await?;
+            await_puback(&mut eventloop, 10).await?;
+            // The hub must report the transmission happened.
+            let result =
+                wait_for_payload_containing(&mut eventloop, &result_topic, "\"result\":", 15)
+                    .await
+                    .with_context(|| format!("soak round {round}: no tx result"))?;
+            anyhow::ensure!(
+                result.contains("\"result\":\"sent\""),
+                "soak round {round}: hub refused the downlink: {result}"
+            );
+            if node
+                .wait_for_rx_packet_matching(down.as_bytes(), Duration::from_secs(20))
+                .await
+                .is_ok()
+            {
+                delivered = true;
+                if attempt > 0 {
+                    println!("  note: soak round {round} downlink needed a retry");
+                }
+                break;
+            }
+        }
+        anyhow::ensure!(delivered, "soak round {round}: downlink lost twice");
         println!("  {} soak round {} both directions", "ok".green(), round + 1);
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     // Bad downlinks must produce error results, not silence.
@@ -177,6 +231,44 @@ async fn run(args: &Args) -> Result<()> {
     println!("  {} malformed downlink rejected: {error_json}", "ok".green());
 
     node.disconnect().await.ok();
+    Ok(())
+}
+
+/// Pump the event loop until the queued QoS1 publish is acknowledged.
+async fn await_puback(eventloop: &mut rumqttc::EventLoop, timeout_secs: u64) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .context("timed out waiting for PUBACK")?;
+        let event = tokio::time::timeout(remaining, eventloop.poll())
+            .await
+            .context("timed out waiting for PUBACK")??;
+        if let Event::Incoming(Packet::PubAck(_)) = event {
+            return Ok(());
+        }
+    }
+}
+
+/// Pump the event loop until `count` SUBACKs have arrived.
+async fn await_subacks(
+    eventloop: &mut rumqttc::EventLoop,
+    count: usize,
+    timeout_secs: u64,
+) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let mut seen = 0;
+    while seen < count {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .context("timed out waiting for SUBACK")?;
+        let event = tokio::time::timeout(remaining, eventloop.poll())
+            .await
+            .context("timed out waiting for SUBACK")??;
+        if let Event::Incoming(Packet::SubAck(_)) = event {
+            seen += 1;
+        }
+    }
     Ok(())
 }
 
