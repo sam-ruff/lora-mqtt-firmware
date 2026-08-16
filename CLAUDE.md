@@ -73,10 +73,11 @@ USB D+ GPIO20 / D- GPIO19. SPI2 at 1 MHz Mode 0.
 - Debug logs stream on the second CDC port (interface 2, 115200): WiFi/MQTT
   state changes, `LoRa RX/TX`, `Gateway ...` lines. The port re-enumerates on
   every reboot.
-- Dependency versions are pinned deliberately: esp-storage 0.8 matches
-  esp-hal 1.0 (0.9 needs 1.1-rc), embassy-embedded-hal 0.5 and embassy-net
-  0.8 match embassy-sync 0.7 / embedded-io-async 0.7. Check alignment before
-  bumping any of them.
+- Dependency versions move as one aligned set: esp-hal 1.1 with esp-rtos 0.3,
+  esp-radio 0.18 and esp-storage 0.9; embassy-sync 0.8 with embassy-executor
+  0.10, embassy-net 0.9, embassy-usb 0.6, embassy-embedded-hal 0.6 and
+  embedded-io(-async) 0.7. Check alignment before bumping any of them.
+  heapless stays on 0.8 because the vendored wt-protocol exposes 0.8 types.
 - The wire layers must not mix: host-link framing lives in wt-protocol /
   hub-protocol; MQTT payloads are JSON in `src/bridge/codec.rs`; the gateway
   speaks Semtech UDP JSON in `src/gateway/udp_protocol.rs`.
