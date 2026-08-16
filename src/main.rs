@@ -13,7 +13,8 @@ esp_bootloader_esp_idf::esp_app_desc!(
     "0.0.0",                    // idf_ver (not using IDF)
     0x10000,                    // mmu_page_size (64KB)
     0,                          // min_efuse_blk_rev_full (accept all)
-    u16::MAX                    // max_efuse_blk_rev_full (accept all)
+    u16::MAX,                   // max_efuse_blk_rev_full (accept all)
+    0                           // secure_version (anti-rollback unused)
 );
 
 use embassy_executor::Spawner;
@@ -23,6 +24,7 @@ use embassy_usb::UsbDevice;
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ram;
 use esp_hal::otg_fs::asynch::{Config as DriverConfig, Driver};
 use esp_hal::otg_fs::Usb;
@@ -55,9 +57,6 @@ use tasks::{AdminReceiver, CommandReceiver, CommandSender, LedReceiver, LedSende
 
 /// Static executor for embassy
 static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
-
-/// Static cell for esp-radio controller (needed for 'static lifetime)
-static RADIO_CONTROLLER: StaticCell<esp_radio::Controller<'static>> = StaticCell::new();
 
 /// Active configuration, loaded once at boot (flash overrides baked defaults)
 static HUB_CONFIG: StaticCell<HubConfig> = StaticCell::new();
@@ -94,7 +93,8 @@ fn main() -> ! {
 
     // Initialise the RTOS scheduler with timer - MUST be done before any async operations
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
+    let sw_ints = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_ints.software_interrupt0);
 
     // Configure SPI for LoRa
     let sclk = peripherals.GPIO7;
@@ -132,7 +132,8 @@ fn main() -> ! {
 
     // Read the eFuse MAC address: the last 3 bytes give each board a distinct
     // USB serial and MQTT client id; all 6 derive the LoRaWAN gateway EUI.
-    let mac = esp_hal::efuse::Efuse::read_base_mac_address();
+    let mut mac = [0u8; 6];
+    mac.copy_from_slice(esp_hal::efuse::base_mac_address().as_bytes());
     let device_id: [u8; 3] = [mac[3], mac[4], mac[5]];
     let usb_serial = format_usb_serial(USB_SERIAL.init([0u8; 10]), device_id);
 
@@ -174,16 +175,11 @@ fn main() -> ! {
     // Build the USB device
     let usb_device = builder.build();
 
-    // Initialise esp-radio (must be after esp_rtos::start); the WiFi driver
-    // borrows this controller.
-    let radio_controller = RADIO_CONTROLLER.init(
-        esp_radio::init().expect("Failed to initialize esp-radio")
-    );
-
+    // Bring up the WiFi driver (must be after esp_rtos::start); the mode is
+    // configured later by the wifi task.
     let (wifi_controller, interfaces) = esp_radio::wifi::new(
-        radio_controller,
         peripherals.WIFI,
-        esp_radio::wifi::Config::default(),
+        esp_radio::wifi::ControllerConfig::default(),
     )
     .expect("Failed to initialize WiFi");
 
@@ -191,7 +187,7 @@ fn main() -> ! {
     let rng = esp_hal::rng::Rng::new();
     let net_seed = ((rng.random() as u64) << 32) | rng.random() as u64;
     let (stack, net_runner) = embassy_net::new(
-        interfaces.sta,
+        interfaces.station,
         embassy_net::Config::dhcpv4(Default::default()),
         STACK_RESOURCES.init(StackResources::new()),
         net_seed,
@@ -203,11 +199,11 @@ fn main() -> ! {
     let ap_config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
         address: embassy_net::Ipv4Cidr::new(ap_ip, 24),
         gateway: Some(ap_ip),
-        dns_servers: heapless::Vec::new(),
+        dns_servers: Default::default(),
     });
     let ap_seed = ((rng.random() as u64) << 32) | rng.random() as u64;
     let (ap_stack, ap_net_runner) = embassy_net::new(
-        interfaces.ap,
+        interfaces.access_point,
         ap_config,
         AP_STACK_RESOURCES.init(StackResources::new()),
         ap_seed,
@@ -236,7 +232,7 @@ fn main() -> ! {
     // Create and run the embassy executor
     let executor = EXECUTOR.init(esp_rtos::embassy::Executor::new());
     executor.run(|spawner| {
-        spawner.must_spawn(async_main(spawner, board));
+        spawner.spawn(async_main(spawner, board).unwrap());
     })
 }
 
@@ -272,7 +268,7 @@ type LoraDriver = Sx1262Driver<
 >;
 
 /// Type alias for the WiFi station device inside the net stack runner
-type NetRunner = Runner<'static, esp_radio::wifi::WifiDevice<'static>>;
+type NetRunner = Runner<'static, esp_radio::wifi::Interface<'static>>;
 
 /// Everything constructed in `main` that the async side takes ownership of
 struct Board {
@@ -330,14 +326,14 @@ async fn async_main(spawner: Spawner, board: Board) {
     let data_writer = usb::CdcWriter::new(data_tx);
 
     // Spawn USB device task (must run to handle USB events)
-    spawner.spawn(usb_device_wrapper(usb_device)).unwrap();
+    spawner.spawn(usb_device_wrapper(usb_device).unwrap());
 
     // Spawn serial tasks using data CDC
-    spawner.spawn(serial_reader_wrapper(data_reader, command_sender)).unwrap();
-    spawner.spawn(serial_writer_wrapper(data_writer)).unwrap();
+    spawner.spawn(serial_reader_wrapper(data_reader, command_sender).unwrap());
+    spawner.spawn(serial_writer_wrapper(data_writer).unwrap());
 
     // Spawn debug writer task
-    spawner.spawn(debug_writer_wrapper(debug_tx)).unwrap();
+    spawner.spawn(debug_writer_wrapper(debug_tx).unwrap());
 
     // Log startup message
     debug!("LoRaMqttHub v{}.{}.{} starting...",
@@ -349,34 +345,34 @@ async fn async_main(spawner: Spawner, board: Board) {
 
     // Spawn other tasks
     debug!("Starting tasks...");
-    spawner.spawn(admin_wrapper(admin_receiver)).unwrap();
-    spawner.spawn(led_wrapper(led, led_receiver)).unwrap();
-    spawner.spawn(hub_ctrl_wrapper(config_store, hub_config)).unwrap();
-    spawner.spawn(net_runner_wrapper(net_runner)).unwrap();
-    spawner.spawn(ap_net_runner_wrapper(ap_net_runner)).unwrap();
-    spawner.spawn(wifi_wrapper(wifi_controller, hub_config, device_id)).unwrap();
-    spawner.spawn(net_watch_wrapper(stack)).unwrap();
-    spawner.spawn(portal_dhcp_wrapper(ap_stack)).unwrap();
-    spawner.spawn(portal_dns_wrapper(ap_stack)).unwrap();
+    spawner.spawn(admin_wrapper(admin_receiver).unwrap());
+    spawner.spawn(led_wrapper(led, led_receiver).unwrap());
+    spawner.spawn(hub_ctrl_wrapper(config_store, hub_config).unwrap());
+    spawner.spawn(net_runner_wrapper(net_runner).unwrap());
+    spawner.spawn(ap_net_runner_wrapper(ap_net_runner).unwrap());
+    spawner.spawn(wifi_wrapper(wifi_controller, hub_config, device_id).unwrap());
+    spawner.spawn(net_watch_wrapper(stack).unwrap());
+    spawner.spawn(portal_dhcp_wrapper(ap_stack).unwrap());
+    spawner.spawn(portal_dns_wrapper(ap_stack).unwrap());
     // A pool of HTTP handlers: browsers open parallel connections.
     for _ in 0..3 {
-        spawner.spawn(portal_http_wrapper(ap_stack, hub_config)).unwrap();
+        spawner.spawn(portal_http_wrapper(ap_stack, hub_config).unwrap());
     }
 
     // The radio has one owner, selected by the configured mode.
     match hub_config.mode {
         HubMode::Bridge => {
             debug!("Mode: LoRa <-> MQTT bridge");
-            spawner.spawn(lora_wrapper(lora_driver, command_receiver, led_sender)).unwrap();
-            spawner.spawn(bridge_wrapper()).unwrap();
-            spawner.spawn(mqtt_wrapper(stack, hub_config, device_id)).unwrap();
+            spawner.spawn(lora_wrapper(lora_driver, command_receiver, led_sender).unwrap());
+            spawner.spawn(bridge_wrapper().unwrap());
+            spawner.spawn(mqtt_wrapper(stack, hub_config, device_id).unwrap());
         }
         HubMode::LorawanGateway => {
             debug!("Mode: LoRaWAN single-channel gateway");
-            spawner.spawn(gateway_wrapper(lora_driver, hub_config, led_sender)).unwrap();
-            spawner.spawn(gateway_udp_wrapper(stack, hub_config, mac)).unwrap();
+            spawner.spawn(gateway_wrapper(lora_driver, hub_config, led_sender).unwrap());
+            spawner.spawn(gateway_udp_wrapper(stack, hub_config, mac).unwrap());
             // Host-link commands still answer; RF ones fail cleanly.
-            spawner.spawn(null_lora_wrapper(command_receiver, led_sender)).unwrap();
+            spawner.spawn(null_lora_wrapper(command_receiver, led_sender).unwrap());
         }
     }
     debug!("All tasks started");
