@@ -1,0 +1,10 @@
+/home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/hub-protocol/target/x86_64-unknown-linux-gnu/debug/deps/wt_protocol-aeae08d9bf853876.d: /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/lib.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/codec.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/framing.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/types.rs
+
+/home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/hub-protocol/target/x86_64-unknown-linux-gnu/debug/deps/libwt_protocol-aeae08d9bf853876.rlib: /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/lib.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/codec.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/framing.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/types.rs
+
+/home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/hub-protocol/target/x86_64-unknown-linux-gnu/debug/deps/libwt_protocol-aeae08d9bf853876.rmeta: /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/lib.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/codec.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/framing.rs /home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/types.rs
+
+/home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/lib.rs:
+/home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/codec.rs:
+/home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/framing.rs:
+/home/developer/RustroverProjects/dev-autopilot/work/lora-mqtt-firmware/vendor/wt-protocol/src/types.rs:
