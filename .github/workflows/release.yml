@@ -14,7 +14,7 @@ permissions:
 jobs:
   test:
     name: Run Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, large, dedicated]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,7 +39,7 @@ jobs:
 
   build:
     name: Build Firmware
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, large, dedicated]
     needs: test
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +67,7 @@ jobs:
 
   release:
     name: Semantic Release
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, small]
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
