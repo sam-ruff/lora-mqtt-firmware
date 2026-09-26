@@ -10,6 +10,14 @@ use embedded_io_async::{ErrorType, Read, Write};
 #[derive(Debug, Clone, Copy)]
 pub struct CdcError;
 
+impl core::fmt::Display for CdcError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("USB CDC endpoint error")
+    }
+}
+
+impl core::error::Error for CdcError {}
+
 impl embedded_io::Error for CdcError {
     fn kind(&self) -> embedded_io::ErrorKind {
         embedded_io::ErrorKind::Other

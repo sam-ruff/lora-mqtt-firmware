@@ -11,20 +11,15 @@
 
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
-use esp_radio::wifi::{
-    AccessPointConfig, AuthMethod, ClientConfig, ModeConfig, WifiController, WifiEvent,
-    WifiStaState,
-};
+use esp_radio::wifi::ap::AccessPointConfig;
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{AuthenticationMethod, Config, WifiController, WifiError};
 use hub_protocol::LinkState;
 
 use crate::debug;
 use crate::hub_config::HubConfig;
-use crate::net::backoff::Backoff;
+use crate::net::station::{StationAction, StationSupervisor};
 use crate::net::stats::HUB_STATS;
-
-/// Consecutive station failures before falling back to the provisioning AP
-/// (with exponential backoff this spans several minutes).
-const MAX_STA_FAILURES: u32 = 10;
 
 /// Keeps the WiFi station associated, or runs the provisioning AP.
 pub async fn wifi_task(
@@ -39,62 +34,56 @@ pub async fn wifi_task(
         return;
     }
 
-    let mut backoff = Backoff::new();
-    let mut failures = 0u32;
+    let mut supervisor = StationSupervisor::new();
     loop {
-        if failures >= MAX_STA_FAILURES {
-            HUB_STATS.set_wifi_state(LinkState::Unprovisioned);
-            debug!("WiFi: giving up on the station, starting provisioning AP");
-            let _ = controller.stop_async().await;
-            run_access_point(&mut controller, device_id).await;
-            return;
-        }
-
-        if matches!(esp_radio::wifi::sta_state(), WifiStaState::Connected) {
-            backoff.reset();
-            failures = 0;
-            HUB_STATS.set_wifi_state(LinkState::Connected);
-            controller.wait_for_event(WifiEvent::StaDisconnected).await;
-            HUB_STATS.set_wifi_state(LinkState::Disconnected);
-            debug!("WiFi: disconnected");
-            continue;
-        }
-
-        if !matches!(controller.is_started(), Ok(true)) {
-            if let Err(err) = start_station(&mut controller, config).await {
-                debug!("WiFi: start failed: {:?}", err);
-                failures += 1;
-                Timer::after(Duration::from_secs(backoff.next_secs() as u64)).await;
-                continue;
+        match supervisor.next_action() {
+            StationAction::FallbackToAccessPoint => {
+                HUB_STATS.set_wifi_state(LinkState::Unprovisioned);
+                debug!("WiFi: giving up on the station, starting provisioning AP");
+                run_access_point(&mut controller, device_id).await;
+                return;
             }
-        }
-
-        HUB_STATS.set_wifi_state(LinkState::Connecting);
-        debug!("WiFi: connecting to {}", config.wifi.ssid.as_str());
-        match controller.connect_async().await {
-            Ok(()) => debug!("WiFi: associated"),
-            Err(err) => {
-                HUB_STATS.set_wifi_state(LinkState::Disconnected);
-                debug!("WiFi: connect failed: {:?}", err);
-                failures += 1;
-                Timer::after(Duration::from_secs(backoff.next_secs() as u64)).await;
+            StationAction::Start => match start_station(&mut controller, config) {
+                Ok(()) => supervisor.started(),
+                Err(err) => {
+                    debug!("WiFi: start failed: {:?}", err);
+                    let secs = supervisor.failed();
+                    Timer::after(Duration::from_secs(secs as u64)).await;
+                }
+            },
+            StationAction::Connect => {
+                HUB_STATS.set_wifi_state(LinkState::Connecting);
+                debug!("WiFi: connecting to {}", config.wifi.ssid.as_str());
+                match controller.connect_async().await {
+                    Ok(_) => {
+                        debug!("WiFi: associated");
+                        supervisor.connected();
+                        HUB_STATS.set_wifi_state(LinkState::Connected);
+                        let _ = controller.wait_for_disconnect_async().await;
+                        HUB_STATS.set_wifi_state(LinkState::Disconnected);
+                        debug!("WiFi: disconnected");
+                    }
+                    Err(err) => {
+                        HUB_STATS.set_wifi_state(LinkState::Disconnected);
+                        debug!("WiFi: connect failed: {:?}", err);
+                        let secs = supervisor.failed();
+                        Timer::after(Duration::from_secs(secs as u64)).await;
+                    }
+                }
             }
         }
     }
 }
 
-async fn start_station(
-    controller: &mut WifiController<'static>,
-    config: &HubConfig,
-) -> Result<(), esp_radio::wifi::WifiError> {
-    let mut client = ClientConfig::default()
-        .with_ssid(config.wifi.ssid.as_str().into())
+/// Configure and start the station; the driver starts as part of `set_config`.
+fn start_station(controller: &mut WifiController<'static>, config: &HubConfig) -> Result<(), WifiError> {
+    let mut station = StationConfig::default()
+        .with_ssid(config.wifi.ssid.as_str())
         .with_password(config.wifi.password.as_str().into());
     if config.wifi.password.is_empty() {
-        client = client.with_auth_method(AuthMethod::None);
+        station = station.with_auth_method(AuthenticationMethod::None);
     }
-    controller.set_config(&ModeConfig::Client(client))?;
-    controller.start_async().await
+    controller.set_config(&Config::Station(station))
 }
 
 /// Start the open provisioning access point and keep it up. The portal
@@ -109,19 +98,14 @@ async fn run_access_point(controller: &mut WifiController<'static>, device_id: [
     }
 
     let ap = AccessPointConfig::default()
-        .with_ssid(ssid.as_str().into())
-        .with_auth_method(AuthMethod::None);
-    if let Err(err) = controller.set_config(&ModeConfig::AccessPoint(ap)) {
-        debug!("WiFi: AP config failed: {:?}", err);
+        .with_ssid(ssid.as_str())
+        .with_auth_method(AuthenticationMethod::None);
+    // Switching mode stops the station and starts the AP in one step.
+    if let Err(err) = controller.set_config(&Config::AccessPoint(ap)) {
+        debug!("WiFi: AP start failed: {:?}", err);
         return;
     }
-    match controller.start_async().await {
-        Ok(()) => debug!("WiFi: provisioning AP '{}' up at 192.168.4.1", ssid.as_str()),
-        Err(err) => {
-            debug!("WiFi: AP start failed: {:?}", err);
-            return;
-        }
-    }
+    debug!("WiFi: provisioning AP '{}' up at 192.168.4.1", ssid.as_str());
     core::future::pending::<()>().await;
 }
 

@@ -34,28 +34,28 @@ path = "src/hub_status.rs"
 [dependencies]
 # Serial port communication (usbportinfo-interface exposes the USB interface
 # number so we can tell the data CDC from the debug CDC deterministically)
-serialport = { version = "4.5", features = ["usbportinfo-interface"] }
+serialport = { version = "4.9", features = ["usbportinfo-interface"] }
 
 # COBS encoding (same as firmware)
 corncobs = "0.1"
 
 # CRC calculation (same as firmware)
-crc = "3.0"
+crc = "3.4"
 
 # CLI argument parsing
-clap = { version = "4.0", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 
 # Error handling
 anyhow = "1.0"
 
 # Coloured output
-colored = "2.0"
+colored = "3.1"
 
 # MQTT broker client for the hub bridge-mode test
 rumqttc = "0.25"
 
 # BLE communication with the node device (ble-e2e-tests)
-btleplug = "0.11"
-uuid = "1.0"
-tokio = { version = "1.0", features = ["rt-multi-thread", "time", "macros"] }
+btleplug = "0.12"
+uuid = "1.24"
+tokio = { version = "1.53", features = ["rt-multi-thread", "time", "macros"] }
 futures = "0.3"

@@ -36,9 +36,9 @@ pub fn hex_decode(hex: &str) -> Result<Vec<u8, MAX_LORA_PAYLOAD>, CodecError> {
     }
     let mut out = Vec::new();
     let bytes = hex.as_bytes();
-    for pair in bytes.chunks_exact(2) {
-        let high = hex_digit(pair[0]).ok_or(CodecError::Hex)?;
-        let low = hex_digit(pair[1]).ok_or(CodecError::Hex)?;
+    for [high, low] in bytes.as_chunks::<2>().0 {
+        let high = hex_digit(*high).ok_or(CodecError::Hex)?;
+        let low = hex_digit(*low).ok_or(CodecError::Hex)?;
         out.push((high << 4) | low).map_err(|_| CodecError::Hex)?;
     }
     Ok(out)
